@@ -335,3 +335,52 @@ aggregate gauge path unchanged).
   · ✅ system-style components, branding defers · ✅ empty states give
   next steps · N-A live HIG page re-read (cached reference used; the
   values applied are the brief's own named targets).
+
+## Granularity wave (2026-11-04) — evidence
+
+Directive: hourly data in the charts, more granular and labeled better
+(/design applied to data), tracked more closely. Commits e3a227e (wave)
++ 3b52d90 (axis-title fix); production GIT_SHA = 3b52d90.
+
+- Hourly lane: the Apple Health connector sync now also pulls
+  `query metrics --interval hourly` for a rolling 14-day window
+  (build_payload.py; hourly watermark tracked separately in
+  watermark.json). Points land in health_samples with
+  meta.granularity="hourly" and ":hourly:" external ids; the daily id
+  format is unchanged, so re-runs insert 0 (verified live).
+  Production hourly counts by type (2026-11-04): basal_energy 290,
+  distance_walking_running 188, step_count 187, active_energy 119,
+  heart_rate 112, resting_heart_rate 107, hrv_sdnn 79, spo2 38,
+  vo2_max 2 — total 1,122. respiratory_rate returns ZERO hourly
+  buckets from the connector (named gap, never fabricated).
+- Daily derivation is grain-safe: healthDays, category summaries and
+  the Science Lab step sums all exclude hourly rows (an hourly SDNN is
+  not the day rollup; hourly steps would double daily totals).
+- Chart system (src/chart.ts + src/series.ts): ONE server-rendered SVG
+  component for every detail chart — y-axis tick values + unit title,
+  x time labels (hours for Day, dates for W/M/Y), min/max markers,
+  zone bands, crosshair enhancer (value bubble with full timestamp),
+  selected-point readout, data-table toggle, and a computed insight
+  caption per chart (avg · range · peak · delta vs personal baseline).
+  Today sparklines gained min/max end labels. Ranges switch via
+  ?range=day|week|month|year segmented links. Gauge pages: Day view
+  shows hourly heart-rate context and states why (gauges are daily).
+- Strava HR streams: migration 0004 workout_streams; sync + webhook +
+  tokened POST /api/import/strava-streams fetch time+heartrate
+  streams, downsampled to <=1 pt/5 s. Live backfill 2026-11-04:
+  50 checked, 47 stored, 3 activities have no HR stream. Workout
+  detail pages (/workout/:id) chart the real curve with Z1-Z5 zone
+  bands from the observed max HR + time-in-zone caption.
+- Sleep stages verdict: the connector store holds stage DURATIONS
+  only (3 sessions, unspecified+awake) — no stage intervals exist, so
+  there is NO hypnogram. The sync now attaches per-night stage totals
+  (meta.stages) and the Sleep page renders a composition bar when a
+  night carries them, with durations-not-sequence labeling.
+- Tests: 122/122 (chart label contract, series shaping, hourly
+  mapping + stable-id dedup, healthDays grain exclusion, stream
+  parse/downsample fixtures, scripts-parse gate).
+- Screenshots (local wrangler dev on a production-seeded local D1,
+  headless Chrome): files/dashboard-proof/granular-*.png — Today,
+  Health Day hourly charts, workout HR chart, Sleep, Battery Day.
+  Verdict: axes/captions legible, real density; one defect found and
+  fixed in-wave (axis title clipped in the gutter -> 3b52d90).
