@@ -101,4 +101,12 @@ describe("every inline <script> block in every page parses (BUG-2 regression)", 
     expect(html).toContain("No data yet");
     expect(html).toContain('getElementById("drivers")');
   });
+  it("Phase-2 Apple Health design layer is present (favorites, browse rows, segmented trend)", () => {
+    const today = todayPage(filledToday, "test");
+    expect(today).toContain("Favorites");
+    expect(today).toContain('class="fav"');
+    expect(today).toContain("165.7"); // HRV favorite carries the real value
+    expect(myDataPage("test")).toContain("brow");
+    expect(scoreDetailPage("battery", "test")).toContain('class="seg"');
+  });
 });

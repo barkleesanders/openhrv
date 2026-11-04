@@ -293,3 +293,45 @@ code and synthetic oracle vectors only.
   https://openhrv.barkleesanders.workers.dev/api/webhooks/strava.
 - Rows 11–13 → pass. Updated final counts: 51 pass / 0 in-progress /
   1 open (row 14, Withings — phase 2 by the goal's own definition).
+
+## Design — Phase 2 (2026-11-03, /design)
+
+Direction (locked before code, per the design skill): **Apple Health
+Summary/Browse** — the iOS Health app's visual language, applied as a
+presentation-layer redesign only (routes, data wiring and the Phase-1
+aggregate gauge path unchanged).
+
+- Canvas: light systemGray6 (#f2f2f7); content on white cards, 18px
+  radius, hairline separators + soft shadow. Follows the system
+  appearance via `prefers-color-scheme` (dark: black canvas, #1c1c1e
+  cards) — no in-app appearance toggle.
+- Type: SF system stack (-apple-system), Large Title page headers,
+  31–48px bold tabular numerals for values, 13px semibold category
+  labels, 12px context lines.
+- Semantic category colors (Health's): Battery #34c759 (activity
+  green), Stress/HRV/Resting HR #ff2d55 / #ff3b30 (heart red), Pressure
+  #ff9500 (orange), Sleep #5856d6 (indigo), Respiratory #32ade6.
+- Today = Health Summary: "Favorites" grid — Battery / Stress /
+  Pressure / HRV / Resting HR / Sleep cards with category icon + label
+  + chevron, big value + unit, source/date context, and gradient-fill
+  SVG sparklines from the real series (server-computed trends in
+  `todayData`); Factor Impact demoted to a browse row.
+- Score detail pages = Health chart pages: category-colored headline
+  value, D/W/M/Y segmented range control over the real daily trend
+  (canvas line + gradient fill), contributors as hairline rows.
+- My Data = Health Browse: icon-chip category rows (chip color per
+  category) with latest values + chevrons.
+- Bottom nav = iOS tab bar: translucent blur (backdrop-filter), hairline
+  top border, safe-area padding, original SF-style line icons (inline
+  SVG, no external assets).
+- HIG gate (apple-hig.md, baseline for web + Apple-targeted brief):
+  ✅ system font/text styles · ✅ contrast (dim #6e6e73 ≈ 5:1 on white;
+  category colors used at ≥14px semibold/large numerals) · ✅ 44pt
+  targets (nav 49pt + safe area, buttons 44pt) · ✅ not color-alone
+  (icons + labels + values) · ✅ no gesture-only actions · ✅ Reduce
+  Motion (no decorative animation added) · ✅ system appearance, no
+  toggle · ✅ safe areas (tab bar + header insets) · ✅ glass only in
+  the tab bar (control layer) · ✅ ≤1 typeface family, no light weights
+  · ✅ system-style components, branding defers · ✅ empty states give
+  next steps · N-A live HIG page re-read (cached reference used; the
+  values applied are the brief's own named targets).

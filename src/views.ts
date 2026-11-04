@@ -1,13 +1,38 @@
 /** OpenHRV — server-rendered PWA views (original design, app-structure layout). */
 
-export const ICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" rx="20" fill="#0b3d2e"/><path d="M8 52 H30 L38 30 L50 72 L60 45 H92" fill="none" stroke="#4ade80" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+export const ICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" rx="22" fill="#ffffff"/><path d="M10 54 H32 L40 32 L54 74 L64 46 H90" fill="none" stroke="#ff2d55" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+
+/** SF-symbol-style line icons (original inline SVG, stroke = currentColor). */
+const svgIcon = (inner: string) =>
+  `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${inner}</svg>`;
+export const ICONS = {
+  waveform: svgIcon(`<path d="M2 12h3.6l2.4-6.5 4.2 13 2.4-6.5H22"/>`),
+  heart: svgIcon(
+    `<path d="M12 20.3C6.9 16.4 3.6 13.2 3.6 9.7 3.6 7.1 5.6 5.1 8.1 5.1c1.6 0 3.1.9 3.9 2.2.8-1.3 2.3-2.2 3.9-2.2 2.5 0 4.5 2 4.5 4.6 0 3.5-3.3 6.7-8.4 10.6Z"/>`,
+  ),
+  journal: svgIcon(`<rect x="4.5" y="4.5" width="15" height="15" rx="3"/><path d="M8.6 15.4l.9-3.3 5.3-5.3 2 2-5.3 5.3-3.3.9Z"/>`),
+  list: svgIcon(
+    `<path d="M9 6.2h10.5M9 12h10.5M9 17.8h10.5"/><circle cx="4.9" cy="6.2" r="1.25" fill="currentColor" stroke="none"/><circle cx="4.9" cy="12" r="1.25" fill="currentColor" stroke="none"/><circle cx="4.9" cy="17.8" r="1.25" fill="currentColor" stroke="none"/>`,
+  ),
+  dots: svgIcon(
+    `<circle cx="5" cy="12" r="1.9" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.9" fill="currentColor" stroke="none"/><circle cx="19" cy="12" r="1.9" fill="currentColor" stroke="none"/>`,
+  ),
+  bolt: svgIcon(`<path d="M13.2 2.8 5 13.4h5.6L9.4 21.2 18.6 10h-5.8l.4-7.2Z" fill="currentColor" stroke="none"/>`),
+  gauge: svgIcon(`<path d="M4.5 15.5a8 8 0 1 1 15 0"/><path d="M12 15.5 16 10"/><circle cx="12" cy="15.5" r="1.3" fill="currentColor" stroke="none"/>`),
+  dial: svgIcon(`<circle cx="12" cy="12" r="8.6"/><path d="M12 12 15.8 8.2"/><circle cx="12" cy="12" r="1.3" fill="currentColor" stroke="none"/>`),
+  moon: svgIcon(`<path d="M19.8 13.6A8.3 8.3 0 1 1 10.4 4.2a6.7 6.7 0 0 0 9.4 9.4Z" fill="currentColor" stroke="none"/>`),
+  flame: svgIcon(
+    `<path d="M12 3.5c.6 3.2-1 4.9-2.3 6.4C8.4 11.4 7.4 12.8 7.4 14.7a4.9 4.9 0 0 0 9.8 0c0-1.5-.7-2.7-1.5-3.9-.5 1-1.2 1.7-2.2 2.1.3-2.9-.3-6.3-1.5-9.4Z"/>`,
+  ),
+  chevron: svgIcon(`<path d="m9.5 5.5 6.5 6.5-6.5 6.5"/>`),
+};
 
 const NAV = [
-  { href: "/", key: "today", label: "Today", icon: "◉" },
-  { href: "/measure", key: "measure", label: "Measure", icon: "♥" },
-  { href: "/journal", key: "journal", label: "Journal", icon: "✎" },
-  { href: "/mydata", key: "mydata", label: "My Data", icon: "▦" },
-  { href: "/more", key: "more", label: "More", icon: "•••" },
+  { href: "/", key: "today", label: "Today", icon: ICONS.waveform },
+  { href: "/measure", key: "measure", label: "Measure", icon: ICONS.heart },
+  { href: "/journal", key: "journal", label: "Journal", icon: ICONS.journal },
+  { href: "/mydata", key: "mydata", label: "My Data", icon: ICONS.list },
+  { href: "/more", key: "more", label: "More", icon: ICONS.dots },
 ];
 
 export function layout(active: string, title: string, body: string, sha = ""): string {
@@ -25,29 +50,61 @@ export function layout(active: string, title: string, body: string, sha = ""): s
 <link rel="icon" href="/favicon.ico" sizes="any">
 <link rel="icon" href="/icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
-<meta name="theme-color" content="#0b3d2e">
+<meta name="theme-color" content="#f2f2f7">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <style>
-:root{--bg:#071a13;--card:#0d2b20;--line:#1d4a38;--txt:#e7f5ee;--dim:#9dbfae;--acc:#4ade80;--warn:#fbbf24;--bad:#f87171}
-*{box-sizing:border-box}body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--bg);color:var(--txt);padding-bottom:84px}
-header{padding:18px 18px 6px}h1{font-size:22px;margin:0}h2{font-size:16px;margin:18px 0 8px}.sub{color:var(--dim);font-size:13px}
-main{padding:6px 14px 14px;max-width:760px;margin:0 auto}
-.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:14px;margin:10px 0}
-.row{display:flex;gap:10px}.row>.card{flex:1}
-.gauge{font-size:34px;font-weight:700}.glabel{color:var(--dim);font-size:12px;text-transform:uppercase;letter-spacing:.06em}
-.stat{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--line);font-size:14px}.stat:last-child{border-bottom:none}
-.stat b{font-variant-numeric:tabular-nums}
-nav{position:fixed;left:0;right:0;bottom:0;background:#09231a;border-top:1px solid var(--line);display:flex;z-index:10}
-nav a{flex:1;text-align:center;color:var(--dim);text-decoration:none;font-size:11px;padding:8px 0 12px}
-nav a.on{color:var(--acc)}nav .ni{display:block;font-size:18px;line-height:1.2}
-button{background:var(--acc);color:#052e1b;border:none;border-radius:10px;padding:10px 14px;font-weight:600;cursor:pointer}
+/* Design direction (Phase 2, /design): Apple Health Summary/Browse.
+   Light systemGray6 canvas, white cards (18px radius, hairline + soft
+   shadow), SF system type scale, semantic category colors, translucent
+   tab bar. Follows the system appearance (no in-app toggle). */
+:root{--bg:#f2f2f7;--card:#ffffff;--line:#e3e3e8;--txt:#1c1c1e;--dim:#6e6e73;--acc:#0071e3;--warn:#ff9500;--bad:#ff3b30;--heart:#ff2d55;--hrv:#ff3b30;--sleep:#5856d6;--resp:#32ade6;--act:#34c759;--navbg:rgba(249,249,251,.86);--shadow:0 1px 3px rgba(0,0,0,.05),0 0 0 1px rgba(0,0,0,.02)}
+@media (prefers-color-scheme:dark){:root{--bg:#000000;--card:#1c1c1e;--line:#38383a;--txt:#f2f2f7;--dim:#aeaeb2;--navbg:rgba(22,22,24,.84);--shadow:0 1px 3px rgba(0,0,0,.45),0 0 0 1px rgba(255,255,255,.05)}}
+html.themed{--txt:#edf7f0;--dim:#a7c4b2;--line:rgba(255,255,255,.16);--navbg:rgba(10,22,17,.88)}
+*{box-sizing:border-box}body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,"Segoe UI",sans-serif;background:var(--bg);color:var(--txt);padding-bottom:calc(96px + env(safe-area-inset-bottom));-webkit-font-smoothing:antialiased}
+header{padding:calc(16px + env(safe-area-inset-top)) 20px 2px;max-width:760px;margin:0 auto}h1{font-size:34px;font-weight:700;letter-spacing:-.02em;margin:0}h2{font-size:17px;font-weight:600;margin:18px 0 8px}.card h2:first-child{margin-top:0}.sub{color:var(--dim);font-size:13px;line-height:1.45}
+main{padding:6px 16px 14px;max-width:760px;margin:0 auto}
+.card{background:var(--card);border-radius:18px;box-shadow:var(--shadow);padding:16px;margin:12px 0}
+.row{display:flex;gap:12px}.row>.card{flex:1}
+.gauge{font-size:38px;font-weight:700;letter-spacing:-.02em;font-variant-numeric:tabular-nums}.glabel{color:var(--dim);font-size:13px;font-weight:600}
+.stat{display:flex;justify-content:space-between;align-items:baseline;gap:12px;padding:9px 0;border-bottom:1px solid var(--line);font-size:15px}.stat:last-child{border-bottom:none}
+.stat b{font-variant-numeric:tabular-nums;font-weight:600;text-align:right}
+nav{position:fixed;left:0;right:0;bottom:0;background:var(--navbg);-webkit-backdrop-filter:blur(20px) saturate(180%);backdrop-filter:blur(20px) saturate(180%);border-top:1px solid var(--line);display:flex;z-index:10;padding-bottom:env(safe-area-inset-bottom)}
+nav a{flex:1;text-align:center;color:var(--dim);text-decoration:none;font-size:10px;font-weight:500;padding:6px 0 5px;min-height:49px}
+nav a.on{color:var(--acc)}nav .ni{display:block}nav .ni svg{width:26px;height:26px}
+button{background:var(--acc);color:#fff;border:none;border-radius:12px;padding:10px 18px;min-height:44px;font-size:15px;font-weight:600;cursor:pointer}
 button.ghost{background:transparent;color:var(--acc);border:1px solid var(--line)}
-textarea,input,select{width:100%;background:#081f16;color:var(--txt);border:1px solid var(--line);border-radius:10px;padding:10px;margin:6px 0}
+button:disabled{opacity:.45}
+textarea,input,select{width:100%;background:var(--bg);color:var(--txt);border:1px solid var(--line);border-radius:12px;padding:12px;margin:6px 0;font-size:16px;font-family:inherit}
 canvas{width:100%;height:120px}
-.tag{display:inline-block;border:1px solid var(--line);border-radius:999px;padding:2px 9px;font-size:12px;color:var(--dim);margin:2px}
+.tag{display:inline-block;background:var(--bg);border:1px solid var(--line);border-radius:999px;padding:3px 10px;font-size:12px;color:var(--txt);margin:2px}
 footer{color:var(--dim);font-size:11px;text-align:center;padding:10px}
 .msg{font-size:13px;color:var(--dim);min-height:18px}
 .err{color:var(--bad)}
+a{color:var(--acc)}
+:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+/* Today favorites (Health Summary cards) */
+.favs{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:12px 0}
+@media (max-width:339px){.favs{grid-template-columns:1fr}}
+.fav{display:block;background:var(--card);border-radius:18px;box-shadow:var(--shadow);padding:14px;text-decoration:none;color:inherit;min-height:44px}
+.fav .cat{display:flex;align-items:center;gap:6px;font-size:14px;font-weight:600}
+.fav .cat svg{width:17px;height:17px}
+.fav .cat .chev{margin-left:auto;color:#c7c7cc}.fav .cat .chev svg{width:15px;height:15px}
+.fav .big{font-size:31px;font-weight:700;letter-spacing:-.02em;font-variant-numeric:tabular-nums;margin-top:6px}
+.fav .big .unit{font-size:15px;font-weight:600;color:var(--dim)}
+.fav .ctx{font-size:12px;color:var(--dim);margin-top:2px}
+.fav .spark{margin-top:8px;display:block}
+/* My Data browse rows (Health Browse list) */
+.brow{display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--line);text-decoration:none;color:inherit;min-height:44px}
+.brow:last-child{border-bottom:none}
+.chip{width:30px;height:30px;border-radius:8px;display:flex;align-items:center;justify-content:center;color:#fff;flex:none}
+.chip svg{width:18px;height:18px}
+.brow .bname{font-size:16px;font-weight:500}
+.brow .blat{margin-left:auto;text-align:right;color:var(--dim);font-size:14px;font-variant-numeric:tabular-nums}
+.brow .chev{color:#c7c7cc}.brow .chev svg{width:15px;height:15px}
+/* Score detail segmented range control */
+.seg{display:flex;background:var(--line);border-radius:11px;padding:2px;gap:2px;margin:10px 0}
+.seg button{flex:1;background:transparent;color:var(--txt);border-radius:9px;padding:5px 0;min-height:30px;font-size:13px;font-weight:600}
+.seg button.on{background:var(--card);box-shadow:0 1px 3px rgba(0,0,0,.14)}
 </style></head>
 <body>
 <header><h1>${title}</h1></header>
@@ -55,7 +112,7 @@ footer{color:var(--dim);font-size:11px;text-align:center;padding:10px}
 <footer>OpenHRV · open-source clean-room build${sha ? ` · build ${sha.slice(0, 7)}` : ""} · not affiliated with Welltory</footer>
 <nav>${nav}</nav>
 <script>
-try { var th = JSON.parse(localStorage.getItem("openhrv-theme") || "null"); if (th && th.acc) { document.documentElement.style.setProperty("--acc", th.acc); document.documentElement.style.setProperty("--card", th.card); document.documentElement.style.setProperty("--bg", th.bg); } } catch (e) {}
+try { var th = JSON.parse(localStorage.getItem("openhrv-theme") || "null"); if (th && th.acc) { document.documentElement.classList.add("themed"); document.documentElement.style.setProperty("--acc", th.acc); document.documentElement.style.setProperty("--card", th.card); document.documentElement.style.setProperty("--bg", th.bg); } } catch (e) {}
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(function(){});
 if (navigator.modelContext && navigator.modelContext.registerTool) {
   var tools = [
@@ -90,6 +147,37 @@ export interface TodayData {
     sleepHours: number | null;
     source: string;
   } | null;
+  /** Latest imported-health day regardless of what drives the gauges —
+   *  feeds the Summary favorites cards (HRV / Resting HR / Sleep). */
+  healthCard?: {
+    date: string;
+    sdnnMs: number;
+    restingHrBpm: number | null;
+    sleepHours: number | null;
+    source: string;
+  } | null;
+  /** Point series for the Summary sparklines (oldest → newest). */
+  trends?: {
+    battery: number[];
+    stress: number[];
+    pressure: number[];
+    sdnn: number[];
+    rhr: number[];
+    sleep: number[];
+  };
+}
+
+/** Inline SVG sparkline with a soft gradient fill (Health trend-card look). */
+export function spark(points: number[] | undefined, color: string, id: string, w = 240, h = 40): string {
+  if (!points || points.length < 2) return "";
+  const mn = Math.min(...points);
+  const mx = Math.max(...points);
+  const span = mx - mn || 1;
+  const pts = points.map(
+    (p, i) => [(i / (points.length - 1)) * w, h - 4 - ((p - mn) / span) * (h - 8)] as const,
+  );
+  const line = pts.map((p, i) => `${i ? "L" : "M"}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(" ");
+  return `<svg class="spark" viewBox="0 0 ${w} ${h}" width="100%" height="${h}" preserveAspectRatio="none" aria-hidden="true"><defs><linearGradient id="sg${id}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${color}" stop-opacity=".28"/><stop offset="1" stop-color="${color}" stop-opacity="0"/></linearGradient></defs><path d="${line} L${w},${h} L0,${h} Z" fill="url(#sg${id})" stroke="none"/><path d="${line}" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 }
 
 export function todayPage(d: TodayData, sha = ""): string {
@@ -138,17 +226,42 @@ document.getElementById("shareLatest").addEventListener("click", function() {
         )
         .join("")}</div>`
     : "";
+  // Health Summary "Favorites": category label + chevron, big value + unit,
+  // context line, gradient sparkline — one card per headline metric.
+  const hc = d.healthCard ?? d.healthLatest;
+  const gaugeCtx =
+    d.scoreSource === "health"
+      ? `Apple Health · ${d.scoreAt ?? ""}`
+      : d.scoreSource === "measurement"
+        ? "Latest measurement"
+        : "No data yet";
+  const fav = (
+    href: string,
+    color: string,
+    icon: string,
+    label: string,
+    value: string,
+    unit: string,
+    ctx: string,
+    points: number[] | undefined,
+    id: string,
+  ) =>
+    `<a class="fav" href="${href}"><span class="cat" style="color:${color}">${icon}${label}<span class="chev">${ICONS.chevron}</span></span>` +
+    `<div class="big">${value}${unit ? ` <span class="unit">${unit}</span>` : ""}</div>` +
+    (ctx ? `<div class="ctx">${ctx}</div>` : "") +
+    spark(points, color, id) +
+    `</a>`;
+  const favs =
+    fav("/battery", "#34c759", ICONS.bolt, "Battery", score(d.battery), d.battery === null ? "" : "%", gaugeCtx, d.trends?.battery, "b") +
+    fav("/stress", "#ff2d55", ICONS.gauge, "Stress", score(d.stress), d.stress === null ? "" : "%", gaugeCtx, d.trends?.stress, "s") +
+    fav("/pressure", "#ff9500", ICONS.dial, "Pressure", score(d.pressure), "", gaugeCtx, d.trends?.pressure, "p") +
+    fav("/mydata/health", "#ff3b30", ICONS.waveform, "HRV", hc ? hc.sdnnMs.toFixed(1) : d.latest ? Number(d.latest.sdnn_ms).toFixed(1) : "—", "ms", hc ? hc.date : "", d.trends?.sdnn, "h") +
+    fav("/mydata/health", "#ff2d55", ICONS.heart, "Resting HR", hc && hc.restingHrBpm !== null ? hc.restingHrBpm.toFixed(0) : "—", "bpm", hc ? hc.date : "", d.trends?.rhr, "r") +
+    fav("/sleep", "#5856d6", ICONS.moon, "Sleep", hc && hc.sleepHours !== null ? hc.sleepHours.toFixed(1) : "—", "h", hc ? hc.date : "", d.trends?.sleep, "z");
   return layout(
     "today",
     "Today",
-    `${welcome}<div class="row">
-       <a href="/battery" style="flex:1;text-decoration:none;color:inherit"><div class="card"><div class="glabel">Battery · charge</div><div class="gauge" style="color:var(--acc)">${score(d.battery)}${d.battery === null ? "" : "<span style='font-size:16px'>%</span>"}</div><div class="sub">how charged you are · tap for detail</div></div></a>
-       <a href="/stress" style="flex:1;text-decoration:none;color:inherit"><div class="card"><div class="glabel">Stress</div><div class="gauge" style="color:var(--bad)">${score(d.stress)}${d.stress === null ? "" : "<span style='font-size:16px'>%</span>"}</div><div class="sub">from stress index + HRV · tap for detail</div></div></a>
-     </div>
-     <div class="row">
-       <a href="/pressure" style="flex:1;text-decoration:none;color:inherit"><div class="card"><div class="glabel">Pressure · load</div><div class="gauge" style="color:var(--warn)">${score(d.pressure)}</div><div class="sub">load estimate from stress index + LF/HF · tap for detail</div></div></a>
-       <a href="/impact" style="flex:1;text-decoration:none;color:inherit"><div class="card"><div class="glabel">Factor impact</div><div class="gauge" style="font-size:20px;padding-top:10px">What moves you →</div><div class="sub">measured impact of tags, sleep &amp; habits</div></div></a>
-     </div>${sourceNote}${insights}${latest}${hist}`,
+    `${welcome}<h2 style="margin:14px 4px 0">Favorites</h2><div class="favs">${favs}</div>${sourceNote}<div class="card" style="padding:6px 16px"><a class="brow" href="/impact"><span class="bname">Factor Impact</span><span class="blat">what moves your numbers</span><span class="chev">${ICONS.chevron}</span></a></div>${insights}${latest}${hist}`,
     sha,
   );
 }
@@ -190,7 +303,7 @@ function drawChart(rr) {
   var c = document.getElementById("chart"), x = c.getContext("2d");
   x.clearRect(0,0,c.width,c.height); if (!rr.length) return;
   var mn = Math.min.apply(null, rr), mx = Math.max.apply(null, rr);
-  x.strokeStyle = "#4ade80"; x.beginPath();
+  x.strokeStyle = "#ff2d55"; x.lineWidth = 2; x.beginPath();
   rr.forEach(function(v, i) { var px = i / (rr.length - 1) * c.width, py = c.height - (v - mn) / (mx - mn || 1) * (c.height - 8) - 4; i ? x.lineTo(px, py) : x.moveTo(px, py); });
   x.stroke();
 }
@@ -345,9 +458,18 @@ export function myDataPage(sha = ""): string {
      <div class="card"><h2>Imported samples</h2><div id="samples"><p class="sub">Loading…</p></div></div>
 <script>
 fetch("/api/mydata/categories").then(function(r){return r.json();}).then(function(j) {
+  var CHIP = {
+    "health": ["#ff2d55", '${ICONS.heart}'],
+    "activity": ["#34c759", '${ICONS.flame}'],
+    "blood-pressure": ["#ff9500", '${ICONS.dial}'],
+    "body": ["#32ade6", '${ICONS.waveform}'],
+    "sleep-mind": ["#5856d6", '${ICONS.moon}']
+  };
+  var CHEV = '${ICONS.chevron}';
   document.getElementById("cats").innerHTML = j.categories.map(function(cat) {
     var lat = cat.metrics.filter(function(m){ return m.latest; }).map(function(m){ return m.label + " " + Number(m.latest.value).toFixed(1) + " " + m.latest.unit; }).join(" · ");
-    return "<div class='stat'><span><a href='/mydata/" + cat.key + "' style='color:var(--acc);text-decoration:none'>" + cat.title + "</a><br><span class='sub'>" + (lat || "no samples yet") + "</span></span><b>" + cat.sampleCount + "</b></div>";
+    var chip = CHIP[cat.key] || ["#8e8e93", '${ICONS.list}'];
+    return "<a class='brow' href='/mydata/" + cat.key + "'><span class='chip' style='background:" + chip[0] + "'>" + chip[1] + "</span><span class='bname'>" + cat.title + "</span><span class='blat'>" + (lat || "no samples yet") + "</span><span class='chev'>" + CHEV + "</span></a>";
   }).join("");
 });
 function shareText(text, btn) {
@@ -366,7 +488,7 @@ fetch("/api/mydata").then(function(r){return r.json();}).then(function(j) {
   document.querySelectorAll(".sharebtn").forEach(function(b){ b.addEventListener("click", function(){ var m = j.measurements[Number(b.getAttribute("data-i"))]; shareText("OpenHRV " + String(m.taken_at).slice(0,10) + " — HR " + Number(m.mean_hr_bpm).toFixed(0) + " bpm · RMSSD " + Number(m.rmssd_ms).toFixed(1) + " ms · SDNN " + Number(m.sdnn_ms).toFixed(1) + " ms", b); }); });
   var c = document.getElementById("chart"), x = c.getContext("2d");
   if (ms.length > 1) { var vs = ms.map(function(m){return m.rmssd_ms;}), mn = Math.min.apply(null, vs), mx = Math.max.apply(null, vs);
-    x.strokeStyle = "#4ade80"; x.beginPath();
+    x.strokeStyle = "#ff2d55"; x.lineWidth = 2; x.beginPath();
     vs.forEach(function(v, i){ var px = i / (vs.length - 1) * c.width, py = c.height - (v - mn) / (mx - mn || 1) * (c.height - 10) - 5; i ? x.lineTo(px, py) : x.moveTo(px, py); }); x.stroke(); }
 });
 </script>`,
@@ -552,16 +674,45 @@ export function scoreDetailPage(kind: "battery" | "stress" | "pressure", sha = "
     stress: "Current stress from the measurement engine, its trend, and what drives it.",
     pressure: "Load / pressure — trend and the contributors behind today's number.",
   } as const;
+  const colors = { battery: "#34c759", stress: "#ff2d55", pressure: "#ff9500" } as const;
   return layout(
     "today",
     titles[kind],
-    `<div class="card"><div class="glabel">${titles[kind]}</div>
-     <div class="gauge" id="gauge" style="font-size:44px">—</div>
+    `<div class="card"><div class="glabel" style="color:${colors[kind]}">${titles[kind]}</div>
+     <div class="gauge" id="gauge" style="font-size:48px;color:${colors[kind]}">—</div>
      <div class="sub" id="state">${subs[kind]}</div></div>
-     <div class="card"><h2>Trend · last 14 readings</h2><canvas id="trend" width="700" height="140"></canvas><p class="msg" id="tmsg"></p></div>
+     <div class="card"><h2>Trend</h2>
+     <div class="seg" role="group" aria-label="Trend range"><button data-r="1">D</button><button data-r="7">W</button><button data-r="14" class="on">M</button><button data-r="10000">Y</button></div>
+     <canvas id="trend" width="700" height="140"></canvas><p class="msg" id="tmsg"></p></div>
      <div class="card"><h2 id="drivers-title">${kind === "battery" ? "Draining / recharging" : "What drives it"}</h2><div id="drivers"><p class="sub">Loading…</p></div></div>
      <p><a href="/"><button class="ghost">← Back to Today</button></a></p>
 <script>
+var TREND = [], RANGE = 14, COLOR = "${colors[kind]}";
+function drawTrend() {
+  var pts = TREND.slice(-RANGE);
+  var c = document.getElementById("trend"), x = c.getContext("2d");
+  x.clearRect(0, 0, c.width, c.height);
+  if (!pts.length) return;
+  if (pts.length === 1) {
+    document.getElementById("tmsg").textContent = pts[0].at.slice(0, 10) + " · " + Math.round(pts[0].value) + ("${kind}" === "pressure" ? "" : "%");
+    x.fillStyle = COLOR; x.beginPath(); x.arc(c.width / 2, c.height / 2, 5, 0, 7); x.fill();
+    return;
+  }
+  document.getElementById("tmsg").textContent = pts[0].at.slice(0, 10) + " – " + pts[pts.length - 1].at.slice(0, 10);
+  x.beginPath();
+  pts.forEach(function(p, i){ var px = i / (pts.length - 1) * c.width, py = c.height - p.value / 100 * (c.height - 10) - 5; i ? x.lineTo(px, py) : x.moveTo(px, py); });
+  x.strokeStyle = COLOR; x.lineWidth = 2; x.stroke();
+  x.lineTo(c.width, c.height); x.lineTo(0, c.height); x.closePath();
+  x.globalAlpha = 0.13; x.fillStyle = COLOR; x.fill(); x.globalAlpha = 1;
+}
+document.querySelectorAll(".seg button").forEach(function(b) {
+  b.addEventListener("click", function() {
+    document.querySelectorAll(".seg button").forEach(function(o){ o.classList.remove("on"); });
+    b.classList.add("on");
+    RANGE = Number(b.getAttribute("data-r"));
+    drawTrend();
+  });
+});
 fetch("/api/scores").then(function(r){return r.json();}).then(function(j) {
   var s = j["${kind}"];
   var driversEl = document.getElementById("drivers");
@@ -578,13 +729,9 @@ fetch("/api/scores").then(function(r){return r.json();}).then(function(j) {
   }
   document.getElementById("gauge").textContent = Math.round(s.value) + ("${kind}" === "pressure" ? "" : "%");
   document.getElementById("state").textContent = s.state + " · updated " + String(s.at).slice(0,16).replace("T"," ") + (s.source === "health" ? " · from Apple Health daily data" : "");
-  var vs = s.trend.map(function(p){return p.value;});
-  if (vs.length > 1) {
-    var c = document.getElementById("trend"), x = c.getContext("2d");
-    x.strokeStyle = "#4ade80"; x.beginPath();
-    vs.forEach(function(v, i){ var px = i / (vs.length - 1) * c.width, py = c.height - v / 100 * (c.height - 10) - 5; i ? x.lineTo(px, py) : x.moveTo(px, py); });
-    x.stroke();
-  } else document.getElementById("tmsg").textContent = "Trend appears after a few days of data.";
+  TREND = s.trend || [];
+  if (TREND.length > 1) drawTrend();
+  else document.getElementById("tmsg").textContent = "Trend appears after a few days of data.";
 }).catch(function() {
   document.getElementById("drivers").innerHTML = "<p class='sub'>Could not load — reload to try again.</p>";
   document.getElementById("tmsg").textContent = "Trend unavailable.";
@@ -605,7 +752,7 @@ export function impactPage(sha = ""): string {
 <script>
 function metricRow(name, m, invert) {
   var d = m.deltaPct, good = invert ? d < 0 : d > 0;
-  return "<div class='stat'><span>" + name + "</span><b style='color:" + (good ? "var(--acc)" : "var(--bad)") + "'>" + (d >= 0 ? "+" : "") + d.toFixed(1) + "%</b></div>" +
+  return "<div class='stat'><span>" + name + "</span><b style='color:" + (good ? "var(--act)" : "var(--bad)") + "'>" + (d >= 0 ? "+" : "") + d.toFixed(1) + "%</b></div>" +
     "<div class='stat'><span class='sub'>with factor / without</span><b>" + m.withMean.toFixed(1) + " / " + m.withoutMean.toFixed(1) + "</b></div>";
 }
 fetch("/api/impact").then(function(r){return r.json();}).then(function(j) {
@@ -631,8 +778,8 @@ export function manifestJson(): string {
     start_url: "/",
     scope: "/",
     display: "standalone",
-    background_color: "#071a13",
-    theme_color: "#0b3d2e",
+    background_color: "#f2f2f7",
+    theme_color: "#f2f2f7",
     icons: [
       { src: "/icon.svg", sizes: "any", type: "image/svg+xml", purpose: "any" },
       { src: "/apple-touch-icon.png", sizes: "180x180", type: "image/png", purpose: "any" },
@@ -669,8 +816,8 @@ export function sleepPage(sha = ""): string {
   return layout(
     "mydata",
     "Sleep",
-    `<div class="card"><div class="glabel">Last night</div>
-     <div class="gauge" id="last" style="font-size:40px">—</div>
+    `<div class="card"><div class="glabel" style="color:var(--sleep)">Last night</div>
+     <div class="gauge" id="last" style="font-size:44px;color:var(--sleep)">—</div>
      <div class="sub" id="lastsub">Loading…</div>
      <div id="stages"></div></div>
      <div class="card"><h2>Trend · last 14 nights</h2><canvas id="trend" width="700" height="140"></canvas><p class="msg" id="tmsg"></p></div>
@@ -696,10 +843,10 @@ fetch("/api/sleep").then(function(r){return r.json();}).then(function(j) {
   var pts = s.nights.slice(0, 14).reverse();
   if (pts.length > 1) {
     var c = document.getElementById("trend"), x = c.getContext("2d");
-    x.strokeStyle = "#38bdf8"; x.beginPath();
+    x.strokeStyle = "#5856d6"; x.lineWidth = 2; x.beginPath();
     pts.forEach(function(n, i) { var px = i / (pts.length - 1) * c.width, py = c.height - Math.min(12, n.hours) / 12 * (c.height - 10) - 5; i ? x.lineTo(px, py) : x.moveTo(px, py); });
     x.stroke();
-    x.strokeStyle = "#fbbf24"; x.setLineDash([4, 4]); x.beginPath();
+    x.strokeStyle = "#8e8e93"; x.setLineDash([4, 4]); x.beginPath();
     var ty = c.height - s.targetH / 12 * (c.height - 10) - 5; x.moveTo(0, ty); x.lineTo(c.width, ty); x.stroke();
   } else document.getElementById("tmsg").textContent = "Trend appears after a few recorded nights.";
 });
@@ -776,7 +923,7 @@ function drawScatter() {
   if (pts.length < 3) { document.getElementById("smsg").textContent = "Not enough paired days yet (" + pts.length + ") — correlations need at least 5."; return; }
   var xs = pts.map(function(d){ return d[kx]; }), ys = pts.map(function(d){ return d[ky]; });
   var mnx = Math.min.apply(null, xs), mxx = Math.max.apply(null, xs), mny = Math.min.apply(null, ys), mxy = Math.max.apply(null, ys);
-  x.fillStyle = "#4ade80";
+  x.fillStyle = "#0071e3";
   pts.forEach(function(d) {
     var px = (d[kx] - mnx) / (mxx - mnx || 1) * (c.width - 24) + 12, py = c.height - (d[ky] - mny) / (mxy - mny || 1) * (c.height - 24) - 12;
     x.beginPath(); x.arc(px, py, 3.5, 0, 7); x.fill();

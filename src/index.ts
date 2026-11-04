@@ -204,6 +204,16 @@ async function todayData(db: D1Database): Promise<TodayData> {
     journalRows as unknown as Array<{ created_at: string; mood: number; tags_json: string }>,
   );
   const insights = generateInsights(days, new Date().toISOString(), new Set(breathingRows.map((b) => String(b.taken_at).slice(0, 10))));
+  const lastHealthDay = [...hDays].reverse().find((x) => x.sdnnMs !== null) ?? null;
+  const healthCard = lastHealthDay
+    ? {
+        date: lastHealthDay.date,
+        sdnnMs: lastHealthDay.sdnnMs as number,
+        restingHrBpm: lastHealthDay.restingHrBpm,
+        sleepHours: lastHealthDay.sleepHours,
+        source: lastHealthDay.sdnnSource ?? "Apple Health",
+      }
+    : null;
   const onboardedRow = await first(db, "SELECT value_json FROM settings WHERE key = ?", "onboarded");
   const showWelcome = !history.length && !hDays.length && !(onboardedRow && String(onboardedRow.value_json) === "1");
   return {
@@ -217,6 +227,15 @@ async function todayData(db: D1Database): Promise<TodayData> {
     scoreSource: latestGauge?.source ?? null,
     scoreAt: latestGauge?.date ?? null,
     healthLatest,
+    healthCard,
+    trends: {
+      battery: gaugeDays.slice(-14).map((g) => Math.round(g.battery)),
+      stress: gaugeDays.slice(-14).map((g) => Math.round(g.stress)),
+      pressure: gaugeDays.slice(-14).map((g) => Math.round(g.pressure)),
+      sdnn: hDays.filter((d) => d.sdnnMs !== null).slice(-14).map((d) => Math.round(d.sdnnMs as number)),
+      rhr: hDays.filter((d) => d.restingHrBpm !== null).slice(-14).map((d) => Math.round(d.restingHrBpm as number)),
+      sleep: hDays.filter((d) => d.sleepHours !== null).slice(-7).map((d) => Math.round((d.sleepHours as number) * 10) / 10),
+    },
   };
 }
 
