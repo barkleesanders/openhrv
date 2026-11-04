@@ -99,6 +99,7 @@ import { summarizeSleep } from "./sleep";
 import { bloodPressureReadings, categoryDefs, summarizeCategories } from "./categories";
 import { buildLabDays, correlationPairs, generateInsights, labSeriesLabel } from "./lab";
 import { COACH_SYSTEM_PROMPT, buildCoachContext, type CoachData } from "./coach";
+import { buildCoachPanel, type CoachEvent } from "./coachpanel";
 import {
   DEFAULT_NOTIFICATION_CONFIG,
   NOTIFICATION_TYPES,
@@ -278,6 +279,22 @@ async function todayData(db: D1Database): Promise<TodayData> {
         source: lastHealthDay.sdnnSource ?? "Apple Health",
       }
     : null;
+  // ---- Phase B: Coach panel + home-feed previews, all deterministic.
+  const { panel: coachPanel, preview: reportsPreview } = await coachPanelFor(db, gaugeDays, hDays, breathingRows);
+  const hrMcB = metricChart(await seriesRows(db, "heart_rate"), "Heart rate", METRIC_STYLE.heart_rate, "day");
+  const hrvMcB = metricChart(await seriesRows(db, "hrv_sdnn"), "HRV (SDNN)", METRIC_STYLE.hrv_sdnn, "day");
+  const hourlyParts: string[] = [];
+  if (hrMcB.grain === "hourly") hourlyParts.push(`<h3 style="margin:10px 0 2px">Heart rate · hourly · ${dayFull(hrMcB.dateRef)}</h3>${hrMcB.html}${hrMcB.caption ? `<p class="msg">${hrMcB.caption}</p>` : ""}`);
+  if (hrvMcB.grain === "hourly") hourlyParts.push(`<h3 style="margin:10px 0 2px">HRV (SDNN) · hourly · ${dayFull(hrvMcB.dateRef)}</h3>${hrvMcB.html}${hrvMcB.caption ? `<p class="msg">${hrvMcB.caption}</p>` : ""}`);
+  const lastSleepDay = [...hDays].reverse().find((x) => x.sleepHours !== null) ?? null;
+  const sleepCard = lastSleepDay
+    ? { date: lastSleepDay.date, hours: lastSleepDay.sleepHours as number, debtH: Math.max(0, Math.round((8 - (lastSleepDay.sleepHours as number)) * 10) / 10) }
+    : null;
+  const journalPreviewRows = await all(db, "SELECT created_at, body FROM journal ORDER BY created_at DESC LIMIT 3");
+  const journalPreview = (journalPreviewRows as Array<Record<string, unknown>>).map((j) => ({
+    at: String(j.created_at).slice(0, 16).replace("T", " "),
+    text: String(j.body ?? "").slice(0, 90),
+  }));
   const onboardedRow = await first(db, "SELECT value_json FROM settings WHERE key = ?", "onboarded");
   const showWelcome = !history.length && !hDays.length && !(onboardedRow && String(onboardedRow.value_json) === "1");
   return {
@@ -287,6 +304,11 @@ async function todayData(db: D1Database): Promise<TodayData> {
     latest,
     history,
     insights,
+    coach: coachPanel,
+    hourlyHtml: hourlyParts.join(""),
+    reportsPreview,
+    sleepCard,
+    journalPreview,
     showWelcome,
     scoreSource: latestGauge?.source ?? null,
     scoreAt: latestGauge?.date ?? null,
@@ -303,15 +325,96 @@ async function todayData(db: D1Database): Promise<TodayData> {
   };
 }
 
+const laDateOf = (d: Date): string =>
+  new Intl.DateTimeFormat("en-CA", { timeZone: "America/Los_Angeles", year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
+
+async function calendarEvents(db: D1Database): Promise<CoachEvent[]> {
+  const rows = await all(db, "SELECT title, start_at, end_at, calendar_name FROM calendar_events ORDER BY start_at ASC LIMIT 200");
+  return (rows as Array<Record<string, unknown>>).map((r) => ({
+    title: String(r.title),
+    start_at: String(r.start_at),
+    end_at: String(r.end_at),
+    calendar_name: String(r.calendar_name ?? ""),
+  }));
+}
+
+/** Phase B: assemble the deterministic Coach panel for the latest scored
+ *  day + the Reports preview numbers, from current D1 state. */
+async function coachPanelFor(
+  db: D1Database,
+  gaugeDays: Array<{ date: string; battery: number; stress: number; pressure: number; hrvMs: number; baselineHrvMs: number | null; restingHrBpm: number | null; sleepHours: number | null }>,
+  hDays: HealthDay[],
+  breathingRows: Array<Record<string, unknown>>,
+): Promise<{ panel: ReturnType<typeof buildCoachPanel> | null; preview: { date: string; stressMinutes: number | null; standHours: number | null; heartPeakText: string } | null }> {
+  const latest = gaugeDays[gaugeDays.length - 1] ?? null;
+  if (!latest) return { panel: null, preview: null };
+  const date = latest.date;
+  const hrRows = await seriesRows(db, "heart_rate");
+  const stepRows = await seriesRows(db, "step_count");
+  const sdnnRows = await seriesRows(db, "hrv_sdnn");
+  const buckets = hourBucketsFromRows(hrRows, stepRows, sdnnRows, date);
+  const priorRhr = gaugeDays.slice(0, -1).map((g) => g.restingHrBpm).filter((x): x is number => x !== null).sort((a, b) => a - b);
+  const restingBaseline = priorRhr.length ? priorRhr[Math.floor(priorRhr.length / 2)] : latest.restingHrBpm;
+  const impact = buckets.length ? stressImpactDay(buckets, restingBaseline) : null;
+  const standHours = buckets.some((b) => b.steps !== null) ? buckets.filter((b) => (b.steps ?? 0) >= 100).length : null;
+  const standByDate = new Map<string, number>();
+  for (const r of stepRows) {
+    if (r.granularity !== "hourly" || r.value === null) continue;
+    const d = String(r.start_at).slice(0, 10);
+    if (Number(r.value) >= 100) standByDate.set(d, (standByDate.get(d) ?? 0) + 1);
+  }
+  const bestStandHours = standByDate.size ? Math.max(...standByDate.values()) : null;
+  const sleepVals = hDays.map((d) => d.sleepHours).filter((x): x is number => x !== null).sort((a, b) => a - b);
+  const sleepMedian = sleepVals.length ? sleepVals[Math.floor(sleepVals.length / 2)] : null;
+  const sleepDebtH = latest.sleepHours !== null ? Math.max(0, Math.round((8 - latest.sleepHours) * 10) / 10) : 0;
+  const lastSleepRow = await first(db, "SELECT end_at FROM sleep ORDER BY end_at DESC LIMIT 1");
+  const wakeTime = lastSleepRow ? String(lastSleepRow.end_at).slice(11, 16) : null;
+  const today = laDateOf(new Date());
+  const events = await calendarEvents(db);
+  const eventsToday = events.filter((e) => e.start_at.slice(0, 10) === today);
+  const eventsTomorrow = events.filter((e) => e.start_at.slice(0, 10) === shiftDate(today, 1));
+  const impacts = await computeImpacts(db);
+  const panel = buildCoachPanel({
+    date,
+    battery: latest.battery,
+    stress: latest.stress,
+    pressure: latest.pressure,
+    hrvMs: latest.hrvMs,
+    baselineHrvMs: latest.baselineHrvMs,
+    restingHrBpm: latest.restingHrBpm,
+    restingBaseline,
+    sleepHours: latest.sleepHours,
+    sleepMedian,
+    sleepDebtH,
+    wakeTime,
+    impacts,
+    buckets,
+    impact,
+    standHours,
+    bestStandHours,
+    breathingOnDate: breathingRows.some((b) => String(b.taken_at).slice(0, 10) === date),
+    eventsToday,
+    eventsTomorrow,
+  });
+  const peakBucket = buckets.filter((b) => b.hr !== null).sort((a, b) => (b.hr as number) - (a.hr as number))[0] ?? null;
+  const preview = {
+    date,
+    stressMinutes: impact?.stressMinutes ?? null,
+    standHours,
+    heartPeakText: peakBucket ? `peak ${Math.round(peakBucket.hr as number)} bpm · ${String(peakBucket.hour).padStart(2, "0")}:00` : "—",
+  };
+  return { panel, preview };
+}
+
 // ---------------------------------------------------------------- pages
 app.get("/", async (c) => c.html(todayPage(await todayData(c.env.DB), c.env.GIT_SHA ?? "")));
 app.get("/measure", (c) => c.html(measurePage(c.env.GIT_SHA ?? "")));
 app.get("/journal", async (c) => c.html(journalPage(c.env.GIT_SHA ?? "", await journalFeedFor(c.env.DB))));
 app.get("/mydata", (c) => c.html(myDataPage(c.env.GIT_SHA ?? "")));
 app.get("/more", (c) => c.html(morePage(c.env.GIT_SHA ?? "")));
-app.get("/battery", async (c) => c.html(scoreDetailPage("battery", c.env.GIT_SHA ?? "", await gaugeChartVm(c.env.DB, "battery", normRange(c.req.query("range"))))));
-app.get("/stress", async (c) => c.html(scoreDetailPage("stress", c.env.GIT_SHA ?? "", await gaugeChartVm(c.env.DB, "stress", normRange(c.req.query("range"))))));
-app.get("/pressure", async (c) => c.html(scoreDetailPage("pressure", c.env.GIT_SHA ?? "", await gaugeChartVm(c.env.DB, "pressure", normRange(c.req.query("range"))))));
+app.get("/battery", async (c) => c.html(scoreDetailPage("battery", c.env.GIT_SHA ?? "", await gaugeChartVm(c.env.DB, "battery", c.req.query("range") ? normRange(c.req.query("range")) : "auto"))));
+app.get("/stress", async (c) => c.html(scoreDetailPage("stress", c.env.GIT_SHA ?? "", await gaugeChartVm(c.env.DB, "stress", c.req.query("range") ? normRange(c.req.query("range")) : "auto"))));
+app.get("/pressure", async (c) => c.html(scoreDetailPage("pressure", c.env.GIT_SHA ?? "", await gaugeChartVm(c.env.DB, "pressure", c.req.query("range") ? normRange(c.req.query("range")) : "auto"))));
 app.get("/impact", (c) => c.html(impactPage(c.env.GIT_SHA ?? "")));
 app.get("/sleep", async (c) => c.html(sleepPage(c.env.GIT_SHA ?? "", await sleepChartVm(c.env.DB))));
 app.get("/workout/:id", async (c) => {
@@ -322,7 +425,7 @@ app.get("/workout/:id", async (c) => {
 app.get("/mydata/:category", async (c) => {
   const def = categoryDefs().find((d) => d.key === c.req.param("category"));
   if (!def) return c.html(layout("", "Not found", `<div class="card"><h2>Unknown category</h2><p><a href="/mydata"><button>Back to My Data</button></a></p></div>`, c.env.GIT_SHA ?? ""), 404);
-  return c.html(categoryPage(def.key, def.title, c.env.GIT_SHA ?? "", await categoryChartVm(c.env.DB, def.key, normRange(c.req.query("range")))));
+  return c.html(categoryPage(def.key, def.title, c.env.GIT_SHA ?? "", await categoryChartVm(c.env.DB, def.key, c.req.query("range") ? normRange(c.req.query("range")) : "auto", c.req.query("metric"))));
 });
 app.get("/lab", (c) => c.html(labPage(c.env.GIT_SHA ?? "")));
 app.get("/coach", (c) => c.html(coachPage(c.env.GIT_SHA ?? "")));
@@ -824,20 +927,71 @@ function metricChart(
   return { html, caption: cap?.text ?? "", grain, dateRef, points: pts };
 }
 
-async function gaugeChartVm(db: D1Database, kind: "battery" | "stress" | "pressure", range: "day" | "week" | "month" | "year") {
+/** Hour buckets assembled from typed series rows (coach + gauge drivers).
+ *  Mirrors hourlyBucketsFor but takes pre-fetched rows, so it works with
+ *  any row source (and in tests). Resting-HR rows fill hours with no HR. */
+function hourBucketsFromRows(hrRows: SeriesRow[], stepRows: SeriesRow[], sdnnRows: SeriesRow[], date: string): HourBucket[] {
+  const byHour = new Map<number, HourBucket>();
+  const put = (rows: SeriesRow[], pick: (b: HourBucket, v: number) => void) => {
+    for (const r of rows) {
+      if (r.granularity !== "hourly" || r.value === null || String(r.start_at).slice(0, 10) !== date) continue;
+      const hour = Number(String(r.start_at).slice(11, 13));
+      if (!Number.isFinite(hour)) continue;
+      const b = byHour.get(hour) ?? { hour, hr: null, steps: null, sdnn: null, activeKcal: null };
+      pick(b, Number(r.value));
+      byHour.set(hour, b);
+    }
+  };
+  put(hrRows, (b, v) => { b.hr = v; });
+  put(stepRows, (b, v) => { b.steps = v; });
+  put(sdnnRows, (b, v) => { b.sdnn = v; });
+  return [...byHour.values()].sort((a, b) => a.hour - b.hour);
+}
+
+async function gaugeChartVm(db: D1Database, kind: "battery" | "stress" | "pressure", range: "day" | "week" | "month" | "year" | "auto"): Promise<{ range: "day" | "week" | "month" | "year"; chartHtml: string; caption: string; note?: string }> {
   const titles = { battery: "Battery", stress: "Stress", pressure: "Pressure" } as const;
   const colors = { battery: "#34c759", stress: "#ff2d55", pressure: "#ff9500" } as const;
   const unit = kind === "pressure" ? "" : "%";
+  // Tap-fix (Phase A): each gauge's Day view leads with ITS hourly driver —
+  // Battery is built from HRV, Stress and Pressure from heart rate (Stress
+  // adds the hourly steps view behind its stationary-stress math). With no
+  // explicit range (the home-card landing), Day is the default whenever
+  // hourly driver data exists; otherwise the daily trend, with the reason
+  // stated at the top — never a blank hourly promise.
+  const driverType = kind === "battery" ? "hrv_sdnn" : "heart_rate";
+  const driverLabel = kind === "battery" ? "HRV (SDNN)" : "Heart rate";
+  if (range === "auto") {
+    const dRows = await seriesRows(db, driverType);
+    range = dRows.some((r) => r.granularity === "hourly" && r.value !== null) ? "day" : "month";
+    if (range === "month") {
+      const vm = await gaugeChartVm(db, kind, "month");
+      return { ...vm, note: `No hourly ${driverLabel} data yet — showing the daily ${titles[kind]} trend. Hourly buckets arrive with the Apple Health sync.` };
+    }
+  }
   if (range === "day") {
     // Gauges are daily constructs — no hourly Battery/Stress/Pressure
-    // exists. The Day view shows the hourly heart-rate context chart and
+    // exists. The Day view leads with the gauge's hourly driver chart and
     // labels exactly why (never a fake hourly gauge).
-    const hrRows = await seriesRows(db, "heart_rate");
-    const mc = metricChart(hrRows, "Heart rate", METRIC_STYLE.heart_rate, "day");
+    const dRows = await seriesRows(db, driverType);
+    const mc = metricChart(dRows, driverLabel, METRIC_STYLE[driverType], "day");
+    let chartHtml = mc.html;
+    let extra = "";
+    if (kind === "stress" && mc.grain === "hourly") {
+      const stepRows = await seriesRows(db, "step_count");
+      const smc = metricChart(stepRows, "Steps", METRIC_STYLE.step_count, "day");
+      const rhrRows = await seriesRows(db, "resting_heart_rate");
+      const dailyRhr = rhrRows.filter((r) => r.granularity !== "hourly" && r.value !== null).map((r) => Number(r.value)).sort((a, b) => a - b);
+      const restingBaseline = dailyRhr.length ? dailyRhr[Math.floor(dailyRhr.length / 2)] : null;
+      const impact = stressImpactDay(hourBucketsFromRows(dRows, stepRows, [], mc.dateRef), restingBaseline);
+      if (impact.stressMinutes !== null) {
+        extra = ` Stationary stress that day: ${impact.stressMinutes} min across ${impact.stationaryStressHours} elevated, still hour${impact.stationaryStressHours === 1 ? "" : "s"} (of ${impact.hoursWithData} measured hours).`;
+      }
+      chartHtml += `<h3 style="margin:14px 0 2px">Steps by hour</h3>${smc.html}${smc.caption ? `<p class="msg">${smc.caption}</p>` : ""}`;
+    }
     const note = mc.grain === "hourly"
-      ? `${titles[kind]} is computed once per day from the day's data — there is no hourly ${titles[kind]} to chart. This is your hourly heart rate for ${dayFull(mc.dateRef)}, the closest hourly signal behind it.`
-      : `${titles[kind]} is computed once per day — there is no hourly ${titles[kind]} to chart, and no hourly heart-rate data is stored yet (it arrives with the Apple Health sync's hourly buckets).`;
-    return { range, chartHtml: mc.html, caption: mc.caption, note };
+      ? `${titles[kind]} is computed once per day from the day's data — there is no hourly ${titles[kind]} to chart. This is the hourly ${driverLabel} behind it for ${dayFull(mc.dateRef)}.${extra}`
+      : `${titles[kind]} is computed once per day — there is no hourly ${titles[kind]} to chart, and no hourly ${driverLabel} data is stored yet (it arrives with the Apple Health sync's hourly buckets).`;
+    return { range: "day", chartHtml, caption: mc.caption, note };
   }
   const rows = (await all(
     db,
@@ -864,10 +1018,10 @@ async function gaugeChartVm(db: D1Database, kind: "battery" | "stress" | "pressu
     yLabel: `${titles[kind]} (${unit || "score"})`,
     decimals: 0,
   });
-  return { range, chartHtml: html, caption: cap?.text ?? "" };
+  return { range: range as "week" | "month" | "year", chartHtml: html, caption: cap?.text ?? "" };
 }
 
-async function categoryChartVm(db: D1Database, key: string, range: "day" | "week" | "month" | "year") {
+async function categoryChartVm(db: D1Database, key: string, range: "day" | "week" | "month" | "year" | "auto", metricFocus?: string) {
   const samples = await all(
     db,
     "SELECT id, type, value, unit, start_at, source, external_id, meta_json FROM health_samples ORDER BY start_at DESC LIMIT 10000",
@@ -883,9 +1037,27 @@ async function categoryChartVm(db: D1Database, key: string, range: "day" | "week
     granularity: rowGranularity(s.meta_json),
   }));
   const cat = summarizeCategories(typed, new Date().toISOString()).find((x) => x.key === key);
-  if (!cat) return { range, chartHtml: `<p class="sub">Unknown category.</p>`, caption: "" };
+  if (!cat) return { range: "month" as const, chartHtml: `<p class="sub">Unknown category.</p>`, caption: "" };
+  // Tap-fix (Phase A): a metric focus (home HRV / Resting HR cards) moves
+  // that metric's chart first; with no explicit range the landing defaults
+  // to the hourly Day view when hourly data exists for the focused (or any)
+  // metric, and says so plainly at the top when it does not.
+  const metrics = [...cat.metrics];
+  const focusIdx = metricFocus ? metrics.findIndex((m) => m.type === metricFocus) : -1;
+  if (focusIdx > 0) metrics.unshift(metrics.splice(focusIdx, 1)[0]);
+  const focusMetric = focusIdx >= 0 ? metrics[0] : null;
+  let note: string | undefined;
+  if (range === "auto") {
+    const anyHourly = metrics.some((m) => m.hourlyCount > 0);
+    range = anyHourly ? "day" : "month";
+    if (!anyHourly) {
+      note = "No hourly data for these metrics yet — showing daily values. Hourly buckets arrive with the Apple Health sync.";
+    } else if (focusMetric && focusMetric.hourlyCount === 0) {
+      note = `${focusMetric.label} has no hourly data yet — its chart below shows daily values.`;
+    }
+  }
   const parts: string[] = [];
-  for (const m of cat.metrics) {
+  for (const m of metrics) {
     const style = METRIC_STYLE[m.type] ?? { color: "#0071e3", unit: "", decimals: 1 };
     const rows = typed.filter((t) => t.type === m.type) as unknown as SeriesRow[];
     const mc = metricChart(rows, m.label, style, range);
@@ -899,7 +1071,13 @@ async function categoryChartVm(db: D1Database, key: string, range: "day" | "week
           : `No data yet`;
     parts.push(`<h3 style="margin:14px 0 2px">${m.label}</h3><p class="sub" style="margin:0">${grainNote}</p>${mc.html}${mc.caption ? `<p class="msg">${mc.caption}</p>` : ""}`);
   }
-  return { range, chartHtml: parts.join(""), caption: "" };
+  return {
+    range,
+    chartHtml: parts.join(""),
+    caption: "",
+    note,
+    baseOverride: focusMetric ? `/mydata/${key}?metric=${focusMetric.type}` : undefined,
+  };
 }
 
 async function sleepChartVm(db: D1Database) {
@@ -945,7 +1123,14 @@ async function sleepChartVm(db: D1Database) {
   } else if (last) {
     stageHtml = `<p class="sub">Stage detail: your Apple Health sync currently provides total sleep time per night — the connector store holds no stage intervals (deep / core / REM) for your nights, so there is no stage timeline to draw. When a source provides stage segments, they appear here.</p>`;
   }
-  return { range: "month", chartHtml, caption: cap?.text ?? "", stageHtml };
+  // Tap-fix (Phase A): the Sleep landing leads with hourly context — the
+  // most recent hourly heart-rate day — before the duration trend.
+  const hrRows = await seriesRows(db, "heart_rate");
+  const hmc = metricChart(hrRows, "Heart rate", METRIC_STYLE.heart_rate, "day");
+  const hourlyHtml = hmc.grain === "hourly"
+    ? `<p class="sub" style="margin:0">Hourly heart rate · ${dayFull(hmc.dateRef)} · the most recent day with hourly data — the night and day around your sleep.</p>${hmc.html}${hmc.caption ? `<p class="msg">${hmc.caption}</p>` : ""}`
+    : `<p class="sub">No hourly heart-rate data yet — hourly buckets arrive with the Apple Health sync. The duration trend below is the sleep view until then.</p>`;
+  return { range: "month", chartHtml, caption: cap?.text ?? "", stageHtml, hourlyHtml };
 }
 
 const mmss = (t: number): string => {
@@ -1151,6 +1336,9 @@ app.post("/api/coach", async (c) => {
     sleepMedianH: sleepSummary.medianHours,
     sleepLastH: sleepSummary.lastNight?.hours ?? null,
     impacts: await computeImpacts(c.env.DB),
+    drivers: td.coach
+      ? [...td.coach.drivers.map((x) => x.text), ...td.coach.actions.map((x) => x.text), td.coach.mostImportant]
+      : [],
     recentMoods: journalRows.map((j) => ({ date: String(j.created_at).slice(0, 10), mood: Number(j.mood) })),
     counts: {
       measurements: await count("measurements"),
@@ -1628,6 +1816,40 @@ app.post("/api/import/health-auto-export", async (c) => {
     }
   }
   return c.json({ ok: true, received: samples.length, inserted, sleep_records: sleepInserted });
+});
+/** Phase B calendar lane: the sync's Mini poster POSTs today + tomorrow's
+ *  events (title + start/end + calendar name ONLY) under the same import
+ *  token as health data. Retention: events older than 14 days are pruned
+ *  on every POST. Calendar rows are rendered only into the owner's own
+ *  Today coach panel — no other endpoint returns them. */
+app.post("/api/import/calendar", async (c) => {
+  if (!(await verifyImportToken(c))) return c.json({ ok: false, error: "bad import token" }, 401);
+  const body = (await c.req.json().catch(() => null)) as { events?: Array<Record<string, unknown>> } | null;
+  if (!body || !Array.isArray(body.events)) return c.json({ ok: false, error: "events array required" }, 400);
+  const owner = c.env.OWNER_EMAIL;
+  let stored = 0;
+  for (const e of body.events.slice(0, 200)) {
+    const id = String(e.id ?? "");
+    const title = String(e.title ?? "").slice(0, 300);
+    const start = String(e.start ?? "");
+    const end = String(e.end ?? "");
+    if (!id || !title || !Number.isFinite(Date.parse(start)) || !Number.isFinite(Date.parse(end))) continue;
+    await c.env.DB.prepare("DELETE FROM calendar_events WHERE owner = ? AND external_id = ?").bind(owner, id).run();
+    await c.env.DB.prepare("INSERT INTO calendar_events (owner, external_id, title, start_at, end_at, calendar_name) VALUES (?, ?, ?, ?, ?, ?)")
+      .bind(owner, id, title, start, end, String(e.calendar ?? "").slice(0, 120))
+      .run();
+    stored++;
+  }
+  const cutoff = new Date(Date.now() - 14 * 86_400_000).toISOString();
+  const old = await all(c.env.DB, "SELECT id, start_at FROM calendar_events LIMIT 1000");
+  let pruned = 0;
+  for (const r of old as Array<Record<string, unknown>>) {
+    if (String(r.start_at) < cutoff) {
+      await c.env.DB.prepare("DELETE FROM calendar_events WHERE id = ?").bind(r.id).run();
+      pruned++;
+    }
+  }
+  return c.json({ ok: true, received: body.events.length, stored, pruned });
 });
 app.post("/api/import/shortcut", async (c) => {
   if (!(await verifyImportToken(c))) return c.json({ ok: false, error: "bad import token" }, 401);

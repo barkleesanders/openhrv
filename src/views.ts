@@ -1,6 +1,7 @@
 /** OpenHRV — server-rendered PWA views (original design, app-structure layout). */
 
 import { CHART_CSS, CHART_JS } from "./chart";
+import type { CoachPanel } from "./coachpanel";
 
 export const ICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" rx="22" fill="#ffffff"/><path d="M10 54 H32 L40 32 L54 74 L64 46 H90" fill="none" stroke="#ff2d55" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 
@@ -169,6 +170,21 @@ export interface TodayData {
     rhr: number[];
     sleep: number[];
   };
+  /** Phase B: deterministic Coach panel rendered on Today. */
+  coach?: CoachPanel | null;
+  /** Phase B addendum: hourly highlight charts (shared component HTML). */
+  hourlyHtml?: string;
+  /** Reports preview headline numbers for the latest measured day. */
+  reportsPreview?: {
+    date: string;
+    stressMinutes: number | null;
+    standHours: number | null;
+    heartPeakText: string;
+  } | null;
+  /** Last night summary for the home sleep card. */
+  sleepCard?: { date: string; hours: number; debtH: number } | null;
+  /** Most recent journal entries for the home timeline preview. */
+  journalPreview?: Array<{ at: string; text: string }>;
 }
 
 /** Inline SVG sparkline with a soft gradient fill (Health trend-card look). */
@@ -260,13 +276,64 @@ document.getElementById("shareLatest").addEventListener("click", function() {
     fav("/battery", "#34c759", ICONS.bolt, "Battery", score(d.battery), d.battery === null ? "" : "%", gaugeCtx, d.trends?.battery, "b") +
     fav("/stress", "#ff2d55", ICONS.gauge, "Stress", score(d.stress), d.stress === null ? "" : "%", gaugeCtx, d.trends?.stress, "s") +
     fav("/pressure", "#ff9500", ICONS.dial, "Pressure", score(d.pressure), "", gaugeCtx, d.trends?.pressure, "p") +
-    fav("/mydata/health", "#ff3b30", ICONS.waveform, "HRV", hc ? hc.sdnnMs.toFixed(1) : d.latest ? Number(d.latest.sdnn_ms).toFixed(1) : "—", "ms", hc ? hc.date : "", d.trends?.sdnn, "h") +
-    fav("/mydata/health", "#ff2d55", ICONS.heart, "Resting HR", hc && hc.restingHrBpm !== null ? hc.restingHrBpm.toFixed(0) : "—", "bpm", hc ? hc.date : "", d.trends?.rhr, "r") +
+    fav("/mydata/health?metric=hrv_sdnn", "#ff3b30", ICONS.waveform, "HRV", hc ? hc.sdnnMs.toFixed(1) : d.latest ? Number(d.latest.sdnn_ms).toFixed(1) : "—", "ms", hc ? hc.date : "", d.trends?.sdnn, "h") +
+    fav("/mydata/health?metric=resting_heart_rate", "#ff2d55", ICONS.heart, "Resting HR", hc && hc.restingHrBpm !== null ? hc.restingHrBpm.toFixed(0) : "—", "bpm", hc ? hc.date : "", d.trends?.rhr, "r") +
     fav("/sleep", "#5856d6", ICONS.moon, "Sleep", hc && hc.sleepHours !== null ? hc.sleepHours.toFixed(1) : "—", "h", hc ? hc.date : "", d.trends?.sleep, "z");
+  // ------------------------------------------------ Phase B: home feed
+  // Today is the home page: brief → coach → AI coach → hourly → reports →
+  // sleep + journal → favorites + impact → everything that lived in More.
+  const esc = (s: string): string => s.replace(/</g, "&lt;");
+  const cp = d.coach ?? null;
+  const rows = (rs: Array<{ text: string; href?: string }>): string =>
+    rs.map((r) => `<div class="stat"><span style="max-width:88%">${esc(r.text)}</span>${r.href ? `<a href="${r.href}" style="color:var(--acc);text-decoration:none">→</a>` : ""}</div>`).join("");
+  const brief = cp
+    ? `<div class="card" data-section="brief"><h2>Daily brief</h2><div class="gauge" style="font-size:24px">${esc(cp.headline)}</div>${cp.briefLines.map((l) => `<p class="sub" style="margin:4px 0">${esc(l)}</p>`).join("")}<p style="margin:8px 0 0"><b>Most important:</b> ${esc(cp.mostImportant)}</p></div>`
+    : "";
+  const coachCards = cp
+    ? `<div class="card" data-section="coach-impacting"><h2>What's impacting you</h2>${rows(cp.impacting)}</div>` +
+      `<div class="card" data-section="coach-drivers"><h2>${esc(cp.driversTitle)}</h2>${rows(cp.drivers)}</div>` +
+      `<div class="card" data-section="coach-actions"><h2>What to work on</h2>${cp.actions.length ? rows(cp.actions) : `<p class="sub">${esc(cp.topAction)}</p>`}</div>`
+    : "";
+  const aiCoach = cp
+    ? `<div class="card" data-section="ai-coach"><h2>AI Coach</h2><p class="sub">Today's top suggestion, from your numbers:</p><p style="margin:4px 0 10px"><b>${esc(cp.topAction)}</b></p><p><a href="/coach"><button>Talk to your coach</button></a></p><div>${cp.chips.map((ch) => `<a class="chipbtn" href="/coach?q=${encodeURIComponent(ch.question)}" style="display:inline-block;margin:2px 4px 2px 0;padding:6px 10px;border:1px solid var(--line,#e5e5ea);border-radius:999px;color:var(--acc);text-decoration:none;font-size:13px">${esc(ch.label)}</a>`).join("")}</div></div>`
+    : `<div class="card" data-section="ai-coach"><h2>AI Coach</h2><p><a href="/coach"><button>Talk to your coach</button></a></p></div>`;
+  const hourly = d.hourlyHtml
+    ? `<div class="card" data-section="hourly"><h2>Hourly highlights</h2>${d.hourlyHtml}</div>`
+    : "";
+  const rp = d.reportsPreview;
+  const reports = rp
+    ? `<div class="card" data-section="reports"><h2>Reports · ${esc(rp.date)}</h2>
+       <div class="stat"><span><a href="/reports/stress" style="color:var(--acc);text-decoration:none">Stress Impact</a></span><b>${rp.stressMinutes === null ? "needs hourly data" : `${rp.stressMinutes} stationary min`}</b></div>
+       <div class="stat"><span><a href="/reports/activity" style="color:var(--acc);text-decoration:none">Activity</a></span><b>${rp.standHours === null ? "—" : `${rp.standHours} stand hours`}</b></div>
+       <div class="stat"><span><a href="/reports/heart" style="color:var(--acc);text-decoration:none">Heart Report</a></span><b>${esc(rp.heartPeakText)}</b></div>
+       <div class="stat"><span><a href="/reports" style="color:var(--acc);text-decoration:none">All reports</a></span><b>→</b></div></div>`
+    : "";
+  const sleepCard = d.sleepCard
+    ? `<div class="stat"><span><a href="/sleep" style="color:var(--acc);text-decoration:none">Last night's sleep · ${esc(d.sleepCard.date)}</a></span><b>${d.sleepCard.hours.toFixed(1)} h · debt ${d.sleepCard.debtH.toFixed(1)} h</b></div>`
+    : "";
+  const journalRows = (d.journalPreview ?? [])
+    .map((j) => `<div class="stat"><span style="max-width:85%">${esc(j.at)} · ${esc(j.text)}</span><a href="/journal" style="color:var(--acc);text-decoration:none">→</a></div>`)
+    .join("");
+  const sleepJournal = `<div class="card" data-section="sleep-journal"><h2>Sleep &amp; journal</h2>${sleepCard}${journalRows || `<p class="sub">Nothing logged yet.</p>`}<div class="stat"><span><a href="/journal" style="color:var(--acc);text-decoration:none">Full journal timeline</a></span><b>→</b></div></div>`;
+  const explore = `<div class="card" data-section="explore"><h2>Explore</h2>
+     <div class="stat"><span><a href="/reports" style="color:var(--acc);text-decoration:none">Reports</a></span><b>stress impact, activity, heart</b></div>
+     <div class="stat"><span><a href="/sleep" style="color:var(--acc);text-decoration:none">Sleep</a></span><b>nights, stages, debt</b></div>
+     <div class="stat"><span><a href="/tests" style="color:var(--acc);text-decoration:none">Self-tests</a></span><b>Self-Discovery set</b></div>
+     <div class="stat"><span><a href="/lab" style="color:var(--acc);text-decoration:none">Science Lab</a></span><b>correlations</b></div>
+     <div class="stat"><span><a href="/coach" style="color:var(--acc);text-decoration:none">AI Coach</a></span><b>your data only</b></div>
+     <div class="stat"><span><a href="/more#breathing" style="color:var(--acc);text-decoration:none">Breathing</a></span><b>box breathing, guided</b></div>
+     <div class="stat"><span><a href="/stories" style="color:var(--acc);text-decoration:none">Stories</a></span><b>HRV science, briefly</b></div>
+     <div class="stat"><span><a href="/themes" style="color:var(--acc);text-decoration:none">Themes</a></span><b>face gallery</b></div>
+     <div class="stat"><span><a href="/welcome" style="color:var(--acc);text-decoration:none">Setup tour</a></span><b>sources &amp; permissions</b></div>
+     <div class="stat"><span><a href="/about" style="color:var(--acc);text-decoration:none">About &amp; feedback</a></span><b>what this is</b></div>
+     <div class="stat"><span><a href="/connect/strava" style="color:var(--acc);text-decoration:none">Strava connection</a></span><b>activities + HR streams</b></div>
+     <div class="stat"><span><a href="/more" style="color:var(--acc);text-decoration:none">Notifications &amp; settings</a></span><b>push, import token, data</b></div>
+     <div class="stat"><span><a href="/api/export/data.json" style="color:var(--acc);text-decoration:none">Export JSON</a></span><b>all your data</b></div>
+     <div class="stat"><span><a href="/api/export/data.csv" style="color:var(--acc);text-decoration:none">Export CSV</a></span><b>measurements</b></div></div>`;
   return layout(
     "today",
     "Today",
-    `${welcome}<h2 style="margin:14px 4px 0">Favorites</h2><div class="favs">${favs}</div>${sourceNote}<div class="card" style="padding:6px 16px"><a class="brow" href="/impact"><span class="bname">Factor Impact</span><span class="blat">what moves your numbers</span><span class="chev">${ICONS.chevron}</span></a></div>${insights}${latest}${hist}`,
+    `${welcome}${brief}${coachCards}${aiCoach}${hourly}${reports}${sleepJournal}<h2 style="margin:14px 4px 0">Favorites</h2><div class="favs">${favs}</div>${sourceNote}<div class="card" style="padding:6px 16px"><a class="brow" href="/impact"><span class="bname">Factor Impact</span><span class="blat">what moves your numbers</span><span class="chev">${ICONS.chevron}</span></a></div>${insights}${explore}${latest}${hist}`,
     sha,
   );
 }
@@ -497,7 +564,7 @@ export function morePage(sha = ""): string {
   return layout(
     "more",
     "More",
-    `<div class="card"><h2>Breathing</h2><p class="sub">Guided box breathing — inhale 4 s, hold 4 s, exhale 4 s, hold 4 s.</p>
+    `<div class="card" id="breathing"><h2>Breathing</h2><p class="sub">Guided box breathing — inhale 4 s, hold 4 s, exhale 4 s, hold 4 s.</p>
      <div class="gauge" id="phase" style="font-size:22px">Ready</div><p><button id="bstart">Start 2-minute session</button></p><p class="msg" id="bmsg"></p></div>
      <div class="card"><h2>Explore</h2>
      <div class="stat"><span><a href="/reports" style="color:var(--acc);text-decoration:none">Reports</a></span><b>stress impact, activity, heart</b></div>
@@ -670,6 +737,9 @@ export interface ChartPageVm {
   chartHtml: string;
   caption: string;
   note?: string;
+  /** Base path for the range segmented links when it carries a query
+   *  (e.g. a ?metric= focus on category pages). */
+  baseOverride?: string;
 }
 
 const RANGE_LINKS = (base: string, range: string): string =>
@@ -677,7 +747,7 @@ const RANGE_LINKS = (base: string, range: string): string =>
   (["day", "week", "month", "year"] as const)
     .map(
       (r) =>
-        `<a href="${base}?range=${r}" class="${r === range ? "on" : ""}" aria-label="${r} view">${r === "day" ? "D" : r === "week" ? "W" : r === "month" ? "M" : "Y"}</a>`,
+        `<a href="${base}${base.includes("?") ? "&" : "?"}range=${r}" class="${r === range ? "on" : ""}" aria-label="${r} view">${r === "day" ? "D" : r === "week" ? "W" : r === "month" ? "M" : "Y"}</a>`,
     )
     .join("") +
   `</div>`;
@@ -800,7 +870,7 @@ self.addEventListener("notificationclick", (e) => { e.notification.close(); e.wa
 }
 
 
-export function sleepPage(sha = "", vm?: ChartPageVm & { stageHtml?: string }): string {
+export function sleepPage(sha = "", vm?: ChartPageVm & { stageHtml?: string; hourlyHtml?: string }): string {
   return layout(
     "mydata",
     "Sleep",
@@ -808,6 +878,7 @@ export function sleepPage(sha = "", vm?: ChartPageVm & { stageHtml?: string }): 
      <div class="gauge" id="last" style="font-size:44px;color:var(--sleep)">—</div>
      <div class="sub" id="lastsub">Loading…</div>
      <div id="stages">${vm?.stageHtml ?? ""}</div></div>
+     ${vm?.hourlyHtml ? `<div class="card"><h2>Hourly context</h2>${vm.hourlyHtml}</div>` : ""}
      <div class="card"><h2>Duration trend · last 30 nights</h2>
      ${vm?.chartHtml ?? `<p class="sub">Trend appears after a few recorded nights.</p>`}
      ${vm?.caption ? `<p class="msg">${vm.caption}</p>` : ""}</div>
@@ -836,7 +907,7 @@ export function categoryPage(key: string, title: string, sha = "", vm?: ChartPag
     title,
     `<div class="card"><h2>${title}</h2><p class="sub" id="blurb">Loading…</p><div id="metrics"></div></div>
      <div class="card"><h2>Charts</h2>
-     ${RANGE_LINKS(`/mydata/${key}`, vm?.range ?? "month")}
+     ${RANGE_LINKS(vm?.baseOverride ?? `/mydata/${key}`, vm?.range ?? "month")}
      ${vm?.note ? `<p class="sub">${vm.note}</p>` : ""}
      ${vm?.chartHtml ?? `<p class="sub">Charts appear as data arrives.</p>`}</div>
      <div class="card" id="bppair" style="display:none"><h2>Paired readings</h2><div id="bp"></div></div>
@@ -941,6 +1012,10 @@ export function coachPage(sha = ""): string {
      <p><a href="/more"><button class="ghost">← Back to More</button></a></p>
 <script>
 var history = [];
+try {
+  var prefill = new URLSearchParams(location.search).get("q");
+  if (prefill) { document.getElementById("q").value = prefill; document.getElementById("q").focus(); }
+} catch (e) {}
 function bubble(role, text) {
   var el = document.getElementById("chat");
   var div = document.createElement("div");

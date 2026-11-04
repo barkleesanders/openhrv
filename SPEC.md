@@ -473,3 +473,50 @@ renders in full for the owner.
   days, ANS both bases, heart-day segmentation priority, journal
   ordering/mixing/orbs, chart label gates for the new multi-line /
   bar / segmented / mini-gauge components, scripts-parse gate.
+
+## Tap-fix wave (Phase A, 2026-11-04)
+
+- Home Favorites taps land hourly-first: gauge pages default (no explicit
+  range) to the Day view whenever hourly driver data exists — Battery
+  leads with hourly HRV (SDNN), Stress with hourly HR plus the hourly
+  steps chart and its stationary-stress minutes for that day, Pressure
+  with hourly HR — each with the honest basis note that the gauge itself
+  is a daily construct. Category pages accept a ?metric= focus (home HRV
+  and Resting HR cards use it) that moves the tapped metric's chart
+  first, preserves the focus in the range links, and defaults to Day
+  when hourly data exists for the focused or any metric. When no hourly
+  data exists, the landing defaults to the daily (Month) view and states
+  the reason at the top — never a blank or a spinner. Sleep leads with
+  an hourly heart-rate context card before its duration trend.
+- Tests: test/tapfix.test.ts enumerates the six Favorites hrefs from the
+  rendered home page, follows each through the router, and asserts the
+  Day-selected segmented control, hourly points with hour labels, the
+  per-gauge drivers, metric-focus ordering, and the no-hourly fallback.
+
+## Coach home wave (Phase B, 2026-11-04)
+
+- Today is the home page, ordered: daily brief → Coach panel (What's
+  impacting you / What's driving stress — or What's keeping stress low
+  in protective mode / What to work on) → AI Coach card (top proactive
+  suggestion, talk entry, data-generated quick-ask chips that prefill
+  the coach chat) → hourly highlights → Reports preview → sleep +
+  journal preview → Favorites + impact → an Explore card carrying every
+  feature that used to live only under More (audit-tested: every
+  internal More link is reachable from Today).
+- The Coach panel is deterministic (src/coachpanel.ts): rule-based
+  synthesis over gauge days, factor impacts, hourly stationary-stress,
+  sleep debt vs the 8 h target, stand hours vs the owner's best days,
+  and schedule load. Every sentence cites its number; actions are
+  threshold-gated and stay silent when not met. The AI Coach chat
+  context now includes the same driver/action lines.
+- Calendar lane: the Apple Health sync also pulls today + tomorrow's
+  events via the Mini's gog calendar route and POSTs title + start/end +
+  calendar name only to /api/import/calendar (import-token auth, same
+  as health data) into calendar_events (migration 0005); rows older
+  than 14 days are pruned on every POST. The panel uses events only as
+  schedule-load context; no Watch or export endpoint returns them. A
+  failed or empty calendar pull changes nothing and is never mentioned.
+- Tests: test/coachpanel.test.ts — fixture-day drivers/actions/
+  protective mode, schedule-load math, endpoint token auth + prune +
+  no-leakage, Today section order, and the More→Today link audit.
+  Full suite 164/164 (16 files).

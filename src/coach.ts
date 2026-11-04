@@ -17,6 +17,9 @@ export interface CoachData {
   sleepMedianH: number | null;
   sleepLastH: number | null;
   impacts: FactorImpact[];
+  /** Phase B: today's deterministic stress drivers + actions from the
+   *  Today coach panel, so chat answers use the same evidence lines. */
+  drivers?: string[];
   recentMoods: Array<{ date: string; mood: number }>;
   counts: { measurements: number; sleep: number; journal: number; breathing: number; tests: number };
 }
@@ -56,6 +59,10 @@ export function buildCoachContext(d: CoachData): string {
   lines.push(
     `Sleep: last night ${d.sleepLastH === null ? "—" : d.sleepLastH.toFixed(1) + " h"}, personal median ${d.sleepMedianH === null ? "—" : d.sleepMedianH.toFixed(1) + " h"}.`,
   );
+  if (d.drivers && d.drivers.length) {
+    lines.push("Today's coach-panel drivers and suggested actions (deterministic, from the same data):");
+    for (const line of d.drivers.slice(0, 8)) lines.push(`- ${line}`);
+  }
   const usable = d.impacts.filter((i) => i.enoughData && i.metrics);
   if (usable.length) {
     lines.push("Measured factor impacts (days with vs without the factor):");
