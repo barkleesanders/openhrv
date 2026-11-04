@@ -9,7 +9,7 @@ GIT_SHA = "dev"
 [[d1_databases]]
 binding = "DB"
 database_name = "openhrv"
-database_id = "PLACEHOLDER_SET_AT_CREATE"
+database_id = ""
 migrations_dir = "migrations"
 
 [observability.logs]
