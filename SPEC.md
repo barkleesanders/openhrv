@@ -74,9 +74,9 @@ D1–D8.
 | 8 | **Normalized samples store** (§g) | One `health_samples` store keyed by type + source (apple_health / strava / manual / ble / ppg / shortcut), feeding Today, gauges, scores and factor impact; source attribution preserved on every sample | D4 | pass |
 | 9 | **Write-back feed toward Apple Health** (§b,g) | `GET /api/export/health-writeback` (import token) returns samples the phone should write into Health (breathing mindful minutes, measurement HRV/HR summaries, in-app sleep) + a documented iOS Shortcut recipe using "Log Health Sample" (+ downloadable recipe file). Platform truth: a Worker cannot write HealthKit directly — automatic native write-back is the D7 companion's path (HealthKit entitlement); the Worker-side feed + Shortcut is the build-now lane | D4 | pass |
 | 10 | **Full data export** (§b) | Settings: download all owner data (measurements, samples, journal, sleep) as JSON and CSV | D4 | pass |
-| 11 | **Strava connector — OAuth connect** (D9) | `/connect/strava` → Strava authorize → callback → tokens stored encrypted in D1 (AES-GCM, key from Worker secret). Requires the owner's Strava API app credentials as Worker secrets; without them the Connect UI shows a clear "needs your Strava API keys" state | D9 | in-progress |
-| 12 | **Strava activity import** (D9) | Activities (run/ride/swim incl. average/max HR; HR streams where available) pulled into the normalized store with source=strava | D9 | in-progress |
-| 13 | **Strava webhook receiver** (D9) | `GET/POST /api/webhooks/strava`: verify-token handshake; activity create/update events trigger a pull (or are queued in `events` when credentials are absent) | D9 | in-progress |
+| 11 | **Strava connector — OAuth connect** (D9) | `/connect/strava` → Strava authorize → callback → tokens stored encrypted in D1 (AES-GCM, key from Worker secret). Requires the owner's Strava API app credentials as Worker secrets; without them the Connect UI shows a clear "needs your Strava API keys" state | D9 | pass |
+| 12 | **Strava activity import** (D9) | Activities (run/ride/swim incl. average/max HR; HR streams where available) pulled into the normalized store with source=strava | D9 | pass |
+| 13 | **Strava webhook receiver** (D9) | `GET/POST /api/webhooks/strava`: verify-token handshake; activity create/update events trigger a pull (or are queued in `events` when credentials are absent) | D9 | pass |
 | 14 | **Withings connector** (phase 2 — noted, not this build) | Scale / blood-pressure via the same normalized-store pattern; listed so the connector layer's next step is on record | D9 | open |
 | 15 | Today dashboard (§b,c) | `/` Today page: Battery + Pressure gauges, latest metrics, recent history | D2 | pass |
 | 16 | **Battery (charge)** — headline gauge + Battery detail screen (§b, BatteryDetails module; Watch Battery gauge/detail) | Today shows Battery as a charge % ("how charged you are") with state label. Detail screen `/battery`: charge level + state, 14-reading charge trend chart, and a factors panel listing what is draining/recharging it (last sleep duration vs baseline, prior-day stress load, recent measurement load) each with direction + magnitude or an honest "no data logged" note. Score: original heuristic from RMSSD vs personal baseline (SPEC math notes) | D5 | pass |
@@ -151,9 +151,10 @@ code and synthetic oracle vectors only.
   derived sleep row; Shortcut POST → inserted; export.xml POST → parsed +
   inserted; write-back feed GET → 200 with the Shortcut recipe; bad token →
   401; Strava webhook verify without the secret → worker 403.
-- Strava activation is the one flagged follow-up: set STRAVA_CLIENT_ID,
-  STRAVA_CLIENT_SECRET, STRAVA_VERIFY_TOKEN, TOKEN_ENC_KEY as Worker secrets
-  from the owner's own Strava API app, then use More → Connect Strava.
+- Strava activation was the one flagged follow-up (set the four Worker
+  secrets from the owner's own Strava API app, then More → Connect Strava)
+  — COMPLETED 2026-11-03; see "Ship evidence — 2026-11-03 (Strava
+  activation, D9)" at the end of this file.
 - The seeded import token is the owner's live token (visible/regenerable in
   More → Settings & connections).
 
@@ -195,9 +196,9 @@ code and synthetic oracle vectors only.
   CoreSimulator.log) with ~8 GiB free disk, so the app was not run
   interactively in a simulator, and it has not been installed on a
   physical Watch.
-- Final counts: 48 pass / 3 in-progress (rows 11–13, Strava — blocked only
-  on the owner's Strava API app secrets) / 1 open (row 14, Withings —
-  phase 2 by the goal's own definition).
+- Final counts at wave 2: 48 pass / 3 in-progress (rows 11–13, Strava) /
+  1 open (row 14, Withings). Updated after Strava activation (below):
+  51 pass / 0 in-progress / 1 open.
 
 ## Ship evidence — 2026-11-03 (always-on Apple Health connector sync)
 
@@ -231,3 +232,36 @@ code and synthetic oracle vectors only.
   (observed: false). Health Auto Export, Shortcuts and export.xml remain
   available as manual alternatives; the write-back feed + Shortcut lane
   is unchanged.
+
+## Ship evidence — 2026-11-03 (Strava activation, D9)
+
+- Credentials were NOT in Vaultwarden (exhaustive `bw` search: no item with
+  "strava" in name or URI among 1,638 items). Per the owner's fallback
+  directive, the existing Strava API app on his account — "Barklee Mini
+  CLI" — was used; its Authorization Callback Domain was changed from
+  localhost to openhrv.barkleesanders.workers.dev (verified by reading the
+  saved Edit form back). App credentials plus the generated
+  STRAVA_VERIFY_TOKEN / TOKEN_ENC_KEY were stored in Vaultwarden as item
+  "Strava API (OpenHRV)" and set as Worker secrets (`wrangler secret list`:
+  STRAVA_CLIENT_ID, STRAVA_CLIENT_SECRET, STRAVA_VERIFY_TOKEN,
+  TOKEN_ENC_KEY alongside the VAPID_* set). All value movement stayed
+  inside Mini-local pipelines; no credential value was printed or logged.
+- Strava's Google SSO sign-in was completed in the owner's real Chrome
+  (password + Authenticator TOTP sourced from the vault's Google item
+  inside Mini-local scripts, never surfaced). Note: a pre-existing
+  half-finished Google sign-in tab (already past its password step,
+  waiting at a TOTP challenge) disappeared from the browser during window
+  management and could not be recovered; a fresh sign-in flow replaced it.
+- OAuth: `/connect/strava` → Strava authorize (app "Barklee Mini CLI") →
+  callback → `/more?strava=connected`; D1 `strava_tokens` count = 1
+  (tokens AES-GCM-encrypted at rest); More page reads "Connected
+  (athlete 121691632)".
+- Backfill: "Sync activities" → fetched 50, inserted 50; D1 read-back:
+  50 `health_samples` rows with source=strava (type=workout).
+- Webhook: `push_subscriptions` GET showed no subscription for our
+  callback; POST create succeeded — Strava's verification handshake
+  against `/api/webhooks/strava` passed with the Worker verify token —
+  and a verify GET returns subscription id 382875 with callback
+  https://openhrv.barkleesanders.workers.dev/api/webhooks/strava.
+- Rows 11–13 → pass. Updated final counts: 51 pass / 0 in-progress /
+  1 open (row 14, Withings — phase 2 by the goal's own definition).
