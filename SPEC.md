@@ -106,7 +106,7 @@ D1–D8.
 | 12 | **Strava activity import** (D9) | Activities (run/ride/swim incl. average/max HR; HR streams where available) pulled into the normalized store with source=strava | D9 | pass |
 | 13 | **Strava webhook receiver** (D9) | `GET/POST /api/webhooks/strava`: verify-token handshake; activity create/update events trigger a pull (or are queued in `events` when credentials are absent) | D9 | pass |
 | 14 | **Withings connector** (phase 2 — noted, not this build) | Scale / blood-pressure via the same normalized-store pattern; listed so the connector layer's next step is on record | D9 | open |
-| 15 | Today dashboard (§b,c) | `/` Today page: Battery + Pressure gauges, latest metrics, recent history | D2 | pass |
+| 15 | Today dashboard (§b,c) | `/` Today page: Battery + Pressure gauges, latest metrics, recent history. Cleanup wave 2026-11-04: the measurements-driven latest/recent cards were removed (production measurements = 0 rows — see the Cleanup wave section); Today now opens with the Quick glance block (gauges + key numbers from health_samples) | D2 | pass |
 | 16 | **Battery (charge)** — headline gauge + Battery detail screen (§b, BatteryDetails module; Watch Battery gauge/detail) | Today shows Battery as a charge % ("how charged you are") with state label. Detail screen `/battery`: charge level + state, 14-reading charge trend chart, and a factors panel listing what is draining/recharging it (last sleep duration vs baseline, prior-day stress load, recent measurement load) each with direction + magnitude or an honest "no data logged" note.  Score: original heuristic from RMSSD vs personal baseline (SPEC math notes). Fix wave 2026-11-03: Battery also computes from imported daily SDNN aggregates (Aggregate score mappings above); the original pass evidenced the RR path only — production re-proof in the goal's dashboard-proof folder (fixed-*.png) | D5 | pass |
 | 17 | **Stress** — headline gauge + Stress detail screen (§b, Pressure/stress details; Watch Pressure gauge/detail) | Today shows a Stress gauge (% + state label: Low/Moderate/High/Very high). Detail screen `/stress`: current stress from the measurement engine (Baevsky stress index primary, LF/HF secondary — published mapping in SPEC math notes), 14-reading trend chart, and a what-drives-it breakdown (SI, LF/HF, RMSSD vs baseline, latest measurement source/time). Fix wave 2026-11-03: Stress also computes from imported daily aggregates (SDNN + resting HR + sleep debt, Aggregate score mappings); the original pass evidenced the RR path only | D5 | pass |
 | 18 | **Pressure** — headline gauge + Pressure detail screen (§b, BloodPressureDetails/PressureDetails modules; Watch Pressure gauge) | Today shows a Pressure gauge (% load). Detail screen `/pressure`: current load, 14-reading trend chart, contributors panel (Baevsky SI component, LF/HF component, recent measurement density) mirroring the decompiled Pressure gauge + detail structure. Fix wave 2026-11-03: Pressure also derives from the aggregate signals (SDNN + resting HR + sleep debt — no LF/HF on aggregate days) with contributors labeled "from daily Health aggregates"; the original pass evidenced the RR path only | D5 | pass |
@@ -118,7 +118,7 @@ D1–D8.
 | 24 | Breathing exercises (§b) | Guided box-breathing session UI + session logging API | D5 | pass |
 | 25 | Self-tests / Self-Discovery (§b) | `/tests` page + `POST/GET /api/self-tests` over the `self_tests` store: reaction time (5 randomized-wait trials, mean/median/best), finger tapping (30 s count + taps/sec), breath hold (timed, with safety copy), orthostatic (lying vs standing measurement comparison), HRV episode (baseline → 2-min paced breathing → post, RMSSD delta). Real timing/scoring in the browser; results trended on the page; wave-2 tests cover storage + validation | D5 | pass |
 | 26 | Science Lab — experiments & correlations (§b) | `/lab` + `GET /api/lab`: per-day series built from measurements (RMSSD/HR/Battery/Stress/pressure), sleep duration, steps and journal tags; Pearson correlations for every pair with ≥5 shared days, ranked by strength, plus an X/Y scatter explorer; wave-2 tests verify day-building and r values against hand-computed expectations (gate n≥5, zero-variance → none) | D5 | pass |
-| 27 | Insights (§b) | Rule-based insights computed from the owner's stored data and shown on Today: data gaps, RMSSD vs baseline (≥10%), Battery 3-reading trend, high-stress streaks, sleep→next-day-RMSSD relation, sleep debt, logged deep-breathing effect; wave-2 tests cover the rules incl. the sleep→RMSSD direction | D5 | pass |
+| 27 | Insights (§b) | Rule-based insights engine computed from the owner's stored data: data gaps, RMSSD vs baseline (≥10%), Battery 3-reading trend, high-stress streaks, sleep→next-day-RMSSD relation, sleep debt, logged deep-breathing effect; wave-2 tests cover the rules incl. the sleep→RMSSD direction. Cleanup wave 2026-11-04: the Today Insights CARD was removed — on production data it rendered only its empty state ("No measurements yet — take your first HRV reading…") because it read the measurements table (0 production rows), and its populated content duplicated the Coach panel. The engine (src/lab.ts generateInsights) and its unit tests stay; the card does not | D5 | pass |
 | 28 | AI Coach chat (§b) | `/coach` + `POST /api/coach`: Workers AI binding (`env.AI`, model var `COACH_MODEL`), system prompt restricts answers to a context block computed from the owner's own data (gauges, trends, sleep, lab correlations, journal factors) with a clear not-medical-advice framing; feature-flag gated (403 when off), 503 when no AI binding; wave-2 tests verify flag/binding behavior and that the context block carries the owner's numbers. Live inference uses Cloudflare Workers AI on the owner's account | D5 | pass |
 | 29 | News / stories content (§b) | `/stories`: five original explainer cards (what HRV measures, breathing and HRV, sleep and readiness, caffeine/alcohol evidence, spotting artifacts) — all copy written for OpenHRV, no third-party content service | D5 | pass |
 | 30 | Onboarding (§b,c) | `/welcome` first-run flow (5 steps: what it measures, ways to measure, connect Apple Health pipes, notifications, privacy) shown on Today until dismissed (persisted `onboarded` setting); relaunchable from More | D5 | pass |
@@ -520,3 +520,68 @@ renders in full for the owner.
   protective mode, schedule-load math, endpoint token auth + prune +
   no-leakage, Today section order, and the More→Today link audit.
   Full suite 164/164 (16 files).
+
+## Cleanup wave (2026-11-04) — panel discipline
+
+Barklee's rule after using the live app: **a panel exists only if it
+populates.** Five waves of accretion left legacy panels reading the
+`measurements` table (0 rows in production — his real data lives in
+`health_samples`) and insight surfaces duplicating the Coach panel.
+Production evidence (2026-11-04, remote D1 counts): measurements 0,
+health_samples 1,668, sleep 4, journal 0, breathing_sessions 0,
+self_tests 0; blood_pressure_* / body_mass / mindful_session samples:
+zero ever; respiratory_rate: 2 samples ever, none hourly.
+
+Removed (markup + dead code + tests):
+
+- Today **Insights** card — rendered only its "No measurements yet"
+  empty state on a fully populated dashboard; its populated content
+  duplicated the Coach panel. The generateInsights engine stays in
+  src/lab.ts with its unit tests; no route calls it now.
+- Today **Latest from Apple Health / Latest measurement** card —
+  duplicated the glance + Favorites numbers at the bottom of the page.
+- Today **Recent** card — measurements-only; rendered nothing.
+- Today **Daily brief** as a standalone card — merged into the Quick
+  glance block as its footer (the "Most important:" line + the
+  schedule-derived brief lines), so brief and glance never stack
+  duplicate numbers.
+- My Data **Measurement history** card (+ its share buttons and fetch
+  plumbing) — measurements-only; rendered "Nothing yet." plus a blank
+  chart canvas.
+
+Reorder — Today now opens with the **Quick glance** block: the three
+gauge tiles (Battery / Stress / Pressure) + a key-numbers strip
+(HRV, resting HR, last night's sleep, steps, stand hours — each row
+only when its number exists) + the merged brief footer. Then: Coach
+panel (impacting / drivers / actions) → AI Coach card → hourly
+highlights → Reports preview → sleep & journal → Favorites → Factor
+Impact → Explore. The empty-journal placeholder line inside Sleep &
+journal now shows only when there is no sleep data either.
+
+Category visibility rule (My Data surfaces): a metric is shown when it
+has real data behind it — **at least 3 daily samples, or any hourly
+samples** (visibleCategories in src/index.ts, applied to
+/api/mydata/categories and to category-page chart blocks; the
+summarizeCategories computation itself stays complete). Consequences
+on production data: the Blood Pressure and Body categories leave the
+category list and their pages redirect to /mydata (zero samples ever);
+Respiratory rate (2 samples, no hourly) and Mindful sessions (0
+samples) lose their chart blocks until data exists. No API data is
+deleted — this is a display rule, and a metric reappears automatically
+the day its data lands.
+
+Kept deliberately: the gauge pages' "from daily aggregates" explainer
+lines (they sit inside fully populated pages and carry the honesty
+labeling), the My Data counts card (its zeros are honest row counts of
+input features, next to 1,668 imported samples), the input-feature
+pages (Journal, Self-tests, Breathing — empty states there are the
+feature's starting state, not dead panels), and the Welcome card
+(conditional on having no data at all).
+
+Tests: test/cleanup.test.ts renders against a production-shaped
+fixture (measurements empty) and asserts the glance is first and
+populated, every content panel on Today carries a real value, the
+removed panels' markup strings are absent, the categories API hides
+empty categories / trace metrics, and data-less category pages
+redirect. Section-order test updated to the new order. Full suite
+170/170 (17 files).

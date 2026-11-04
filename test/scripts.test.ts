@@ -92,9 +92,12 @@ describe("every inline <script> block in every page parses (BUG-2 regression)", 
       }
     });
   }
-  it("mydata share buttons use data-i + listeners, not inline onclick strings", () => {
+  it("mydata has no inline onclick strings (the BUG-2 share-button class is gone with its panel)", () => {
+    // Cleanup wave removed the measurements-driven Measurement history
+    // card — the share buttons lived there. What must never come back is
+    // an inline onclick built from interpolated strings.
     expect(myDataPage("test")).not.toContain("onclick='shareText");
-    expect(myDataPage("test")).toContain("sharebtn");
+    expect(myDataPage("test")).not.toContain("Measurement history");
   });
   it("score detail pages settle the drivers panel in the no-data state (BUG-3)", () => {
     const html = scoreDetailPage("battery", "test");

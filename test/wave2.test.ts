@@ -50,8 +50,6 @@ describe("wave-2 pages render", () => {
     ["/tests", "Reaction time"],
     ["/themes", "Face gallery"],
     ["/about", "Feedback"],
-    ["/mydata/activity", "Activity"],
-    ["/mydata/blood-pressure", "Blood Pressure"],
   ];
   for (const [path, marker] of pages) {
     it(`GET ${path} renders (${marker})`, async () => {
@@ -63,6 +61,18 @@ describe("wave-2 pages render", () => {
   it("GET /mydata/bogus is a 404", async () => {
     const r = await app.request("/mydata/bogus", {}, env);
     expect(r.status).toBe(404);
+  });
+  it("cleanup wave: a category with no data behind it redirects to /mydata; one with data renders", async () => {
+    const { env, db } = makeEnv();
+    const empty = await app.request("/mydata/blood-pressure", {}, env);
+    expect(empty.status).toBe(302);
+    expect(empty.headers.get("location")).toBe("/mydata");
+    for (let i = 0; i < 3; i++) {
+      db.table("health_samples").push({ id: 50 + i, owner: OWNER, type: "step_count", value: 8000 + i, unit: "count", start_at: `2026-10-0${i + 1}T12:00:00.000Z`, end_at: null, source: "apple_health", external_id: `st${i}`, meta_json: "{}" });
+    }
+    const ok = await app.request("/mydata/activity", {}, env);
+    expect(ok.status).toBe(200);
+    expect(await ok.text()).toContain("Activity");
   });
   it("manifest carries the PWA shortcuts (home-screen quick actions)", async () => {
     const m = (await (await app.request("/manifest.webmanifest", {}, env)).json()) as { shortcuts: Array<{ url: string }> };
@@ -83,16 +93,25 @@ describe("sleep + categories APIs (seeded stub data)", () => {
   });
   it("categories pair blood-pressure samples and report latest values", async () => {
     const { env, db } = makeEnv();
-    const at = "2026-10-02T08:00:00.000Z";
-    db.table("health_samples").push(
-      { id: 1, owner: OWNER, type: "blood_pressure_systolic", value: 120, unit: "mmHg", start_at: at, end_at: null, source: "apple_health", external_id: "a", meta_json: "{}" },
-      { id: 2, owner: OWNER, type: "blood_pressure_diastolic", value: 80, unit: "mmHg", start_at: at, end_at: null, source: "apple_health", external_id: "b", meta_json: "{}" },
-    );
+    // Cleanup wave visibility rule: a metric surfaces with >= 3 daily
+    // samples (or any hourly) — seed three pairs; the pairing + latest
+    // assertions are unchanged.
+    let id = 1;
+    for (const [at, sys, dia] of [
+      ["2026-09-30T08:00:00.000Z", 118, 76],
+      ["2026-10-01T08:00:00.000Z", 119, 78],
+      ["2026-10-02T08:00:00.000Z", 120, 80],
+    ] as const) {
+      db.table("health_samples").push(
+        { id: id++, owner: OWNER, type: "blood_pressure_systolic", value: sys, unit: "mmHg", start_at: at, end_at: null, source: "apple_health", external_id: `s${id}`, meta_json: "{}" },
+        { id: id++, owner: OWNER, type: "blood_pressure_diastolic", value: dia, unit: "mmHg", start_at: at, end_at: null, source: "apple_health", external_id: `d${id}`, meta_json: "{}" },
+      );
+    }
     const j = (await (await app.request("/api/mydata/categories", {}, env)).json()) as {
       categories: Array<{ key: string; sampleCount: number }>;
       bpReadings: Array<{ systolic: number; diastolic: number }>;
     };
-    expect(j.categories.find((c) => c.key === "blood-pressure")!.sampleCount).toBe(2);
+    expect(j.categories.find((c) => c.key === "blood-pressure")!.sampleCount).toBe(6);
     expect(j.bpReadings[0]).toMatchObject({ systolic: 120, diastolic: 80 });
   });
 });

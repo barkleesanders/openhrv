@@ -67,7 +67,10 @@ describe("Phase A: home-card click-through lands hourly-first", () => {
     const { env, db } = makeEnv();
     seed(db, true);
     const home = await (await app.request("/", {}, env)).text();
-    const hrefs = favHrefs(home);
+    // The quick-glance tiles repeat the three gauge hrefs ahead of the
+    // Favorites grid (cleanup wave) — the click-through contract covers
+    // the six unique favorite landings.
+    const hrefs = [...new Set(favHrefs(home))];
     expect(hrefs).toEqual([
       "/battery",
       "/stress",

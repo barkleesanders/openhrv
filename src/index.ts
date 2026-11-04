@@ -96,8 +96,8 @@ import {
   type SeriesRow,
 } from "./series";
 import { summarizeSleep } from "./sleep";
-import { bloodPressureReadings, categoryDefs, summarizeCategories } from "./categories";
-import { buildLabDays, correlationPairs, generateInsights, labSeriesLabel } from "./lab";
+import { bloodPressureReadings, categoryDefs, summarizeCategories, type CategorySummary } from "./categories";
+import { buildLabDays, correlationPairs, labSeriesLabel } from "./lab";
 import { COACH_SYSTEM_PROMPT, buildCoachContext, type CoachData } from "./coach";
 import { buildCoachPanel, type CoachEvent } from "./coachpanel";
 import {
@@ -253,22 +253,7 @@ async function todayData(db: D1Database): Promise<TodayData> {
           source: hDays.find((d) => d.date === latestGauge.date)?.sdnnSource ?? "Apple Health",
         }
       : null;
-  // Rule-based insights (D5) over the same stored data the Lab uses.
-  const sleepRows = await all(db, "SELECT end_at, duration_s FROM sleep LIMIT 500");
-  const stepRowsRaw = await all(db, "SELECT type, value, start_at, meta_json FROM health_samples WHERE type = 'step_count' LIMIT 2000");
-  // Hourly step buckets must not double the daily totals the Lab sums.
-  const stepRows = (stepRowsRaw as Array<Record<string, unknown>>)
-    .filter((r) => rowGranularity(r.meta_json) !== "hourly")
-    .map((r) => ({ type: String(r.type), value: r.value === null ? null : Number(r.value), start_at: String(r.start_at) }));
-  const journalRows = await all(db, "SELECT created_at, mood, tags_json FROM journal LIMIT 500");
   const breathingRows = await all(db, "SELECT taken_at FROM breathing_sessions LIMIT 500");
-  const days = buildLabDays(
-    asc,
-    sleepRows as unknown as Array<{ end_at: string; duration_s: number }>,
-    stepRows as unknown as Array<{ type: string; value: number | null; start_at: string }>,
-    journalRows as unknown as Array<{ created_at: string; mood: number; tags_json: string }>,
-  );
-  const insights = generateInsights(days, new Date().toISOString(), new Set(breathingRows.map((b) => String(b.taken_at).slice(0, 10))));
   const lastHealthDay = [...hDays].reverse().find((x) => x.sdnnMs !== null) ?? null;
   const healthCard = lastHealthDay
     ? {
@@ -297,13 +282,20 @@ async function todayData(db: D1Database): Promise<TodayData> {
   }));
   const onboardedRow = await first(db, "SELECT value_json FROM settings WHERE key = ?", "onboarded");
   const showWelcome = !history.length && !hDays.length && !(onboardedRow && String(onboardedRow.value_json) === "1");
+  // Quick-glance strip: latest day that has a steps total + the scored
+  // day's stand hours (from the reports preview computation).
+  const stepsDay = [...hDays].reverse().find((x) => x.steps !== null) ?? null;
   return {
     battery: s.battery,
     stress: s.stress,
     pressure: s.pressure,
     latest,
     history,
-    insights,
+    glance: {
+      steps: stepsDay?.steps ?? null,
+      stepsDate: stepsDay?.date ?? null,
+      standHours: reportsPreview?.standHours ?? null,
+    },
     coach: coachPanel,
     hourlyHtml: hourlyParts.join(""),
     reportsPreview,
@@ -425,7 +417,11 @@ app.get("/workout/:id", async (c) => {
 app.get("/mydata/:category", async (c) => {
   const def = categoryDefs().find((d) => d.key === c.req.param("category"));
   if (!def) return c.html(layout("", "Not found", `<div class="card"><h2>Unknown category</h2><p><a href="/mydata"><button>Back to My Data</button></a></p></div>`, c.env.GIT_SHA ?? ""), 404);
-  return c.html(categoryPage(def.key, def.title, c.env.GIT_SHA ?? "", await categoryChartVm(c.env.DB, def.key, c.req.query("range") ? normRange(c.req.query("range")) : "auto", c.req.query("metric"))));
+  const vm = await categoryChartVm(c.env.DB, def.key, c.req.query("range") ? normRange(c.req.query("range")) : "auto", c.req.query("metric"));
+  // Cleanup wave: a category with no visible metrics (no data behind any
+  // of its panels) is not a page — send the owner back to the category list.
+  if ((vm as { hidden?: boolean }).hidden) return c.redirect("/mydata");
+  return c.html(categoryPage(def.key, def.title, c.env.GIT_SHA ?? "", vm));
 });
 app.get("/lab", (c) => c.html(labPage(c.env.GIT_SHA ?? "")));
 app.get("/coach", (c) => c.html(coachPage(c.env.GIT_SHA ?? "")));
@@ -797,6 +793,20 @@ app.get("/api/sleep", async (c) => {
   return c.json({ ok: true, summary });
 });
 
+/** Cleanup wave — category visibility rule (SPEC "Panel discipline"): a
+ *  metric surfaces on My Data surfaces only when it has real data behind
+ *  it — at least 3 daily samples, or any hourly samples. Sparser metrics
+ *  (in production: respiratory rate, 2 samples ever and no hourly data)
+ *  stay hidden until data exists; a category whose metrics are all hidden
+ *  (production: Blood Pressure, Body — zero samples ever) disappears from
+ *  the category list and its page redirects to /mydata. The underlying
+ *  summarizeCategories stays complete; this is a display filter only. */
+export function visibleCategories(cats: CategorySummary[]): CategorySummary[] {
+  return cats
+    .map((cat) => ({ ...cat, metrics: cat.metrics.filter((m) => m.count >= 3 || m.hourlyCount > 0) }))
+    .filter((cat) => cat.metrics.length > 0);
+}
+
 app.get("/api/mydata/categories", async (c) => {
   const samples = await all(
     c.env.DB,
@@ -814,7 +824,7 @@ app.get("/api/mydata/categories", async (c) => {
   }));
   return c.json({
     ok: true,
-    categories: summarizeCategories(typed, new Date().toISOString()),
+    categories: visibleCategories(summarizeCategories(typed, new Date().toISOString())),
     bpReadings: bloodPressureReadings(typed),
     recentSamples: typed.slice(0, 200),
   });
@@ -1036,8 +1046,14 @@ async function categoryChartVm(db: D1Database, key: string, range: "day" | "week
     external_id: (s.external_id as string | null) ?? null,
     granularity: rowGranularity(s.meta_json),
   }));
-  const cat = summarizeCategories(typed, new Date().toISOString()).find((x) => x.key === key);
-  if (!cat) return { range: "month" as const, chartHtml: `<p class="sub">Unknown category.</p>`, caption: "" };
+  const rawCat = summarizeCategories(typed, new Date().toISOString()).find((x) => x.key === key);
+  if (!rawCat) return { range: "month" as const, chartHtml: `<p class="sub">Unknown category.</p>`, caption: "" };
+  // Cleanup wave: chart blocks render only for metrics that pass the
+  // visibility rule — a metric with no (or only trace) data gets no
+  // "No data yet" chart block. A fully hidden category is flagged so the
+  // route can redirect to /mydata instead of serving a hollow page.
+  const cat = visibleCategories([rawCat])[0];
+  if (!cat) return { range: "month" as const, chartHtml: "", caption: "", hidden: true };
   // Tap-fix (Phase A): a metric focus (home HRV / Resting HR cards) moves
   // that metric's chart first; with no explicit range the landing defaults
   // to the hourly Day view when hourly data exists for the focused (or any)

@@ -54,6 +54,11 @@ export interface CoachChip {
 export interface CoachPanel {
   headline: string;
   briefLines: string[];
+  /** The schedule-derived brief lines only (schedule load, medical block,
+   *  tight start, tomorrow) — the numeric brief lines duplicate the Today
+   *  quick-glance numbers, so the merged home brief shows headline +
+   *  briefTail + mostImportant instead of the full briefLines stack. */
+  briefTail: string[];
   mostImportant: string;
   impacting: CoachRow[];
   driversTitle: string;
@@ -164,21 +169,29 @@ export function buildCoachPanel(inp: CoachInput): CoachPanel {
 
   // ------------------------------------------------- schedule context
   const load = scheduleLoad(inp.eventsToday, inp.wakeTime);
+  const briefTail: string[] = [];
   let scheduleLine: string | null = null;
   if (load.count > 0) {
     scheduleLine = `Today's schedule: ${load.count} event${load.count === 1 ? "" : "s"}, ${r1(load.totalHours)} h booked${load.firstStart ? `, first at ${load.firstStart}` : ""}${load.beforeNoonHours > 0 ? ` (${r1(load.beforeNoonHours)} h before noon)` : ""}.`;
     briefLines.push(scheduleLine);
+    briefTail.push(scheduleLine);
     const med = inp.eventsToday.find((e) => isMedical(e.title));
     if (med) {
-      briefLines.push(`Includes a medical block: ${med.title} at ${med.start_at.slice(11, 16)} — plan a light morning around it.`);
+      const line = `Includes a medical block: ${med.title} at ${med.start_at.slice(11, 16)} — plan a light morning around it.`;
+      briefLines.push(line);
+      briefTail.push(line);
     }
     if (load.earlyStart && inp.wakeTime) {
-      briefLines.push(`First event at ${load.firstStart} lands within 30 min of your ${inp.wakeTime} wake time — a tight start.`);
+      const line = `First event at ${load.firstStart} lands within 30 min of your ${inp.wakeTime} wake time — a tight start.`;
+      briefLines.push(line);
+      briefTail.push(line);
     }
   }
   const tomorrowLoad = scheduleLoad(inp.eventsTomorrow, null);
   if (tomorrowLoad.count > 0 && tomorrowLoad.firstStart) {
-    briefLines.push(`Tomorrow starts at ${tomorrowLoad.firstStart} (${tomorrowLoad.count} event${tomorrowLoad.count === 1 ? "" : "s"}, ${r1(tomorrowLoad.totalHours)} h booked).`);
+    const line = `Tomorrow starts at ${tomorrowLoad.firstStart} (${tomorrowLoad.count} event${tomorrowLoad.count === 1 ? "" : "s"}, ${r1(tomorrowLoad.totalHours)} h booked).`;
+    briefLines.push(line);
+    briefTail.push(line);
   }
 
   // ------------------------------------------------------ impacting
@@ -331,6 +344,7 @@ export function buildCoachPanel(inp: CoachInput): CoachPanel {
   return {
     headline,
     briefLines,
+    briefTail,
     mostImportant,
     impacting: impacting.slice(0, 4),
     driversTitle: protective ? "What's keeping stress low" : "What's driving stress",

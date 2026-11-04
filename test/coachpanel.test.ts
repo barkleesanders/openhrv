@@ -175,7 +175,7 @@ describe("calendar lane: token, storage, prune, panel use, no leakage", () => {
     const { env, db } = makeEnv();
     seedHealth(db);
     const home = await (await app.request("/", {}, env)).text();
-    expect(home).toContain('data-section="brief"');
+    expect(home).toContain('data-section="glance"');
     expect(home).toContain('data-section="coach-impacting"');
     expect(home).not.toContain("Today's schedule");
     expect(home).not.toContain("calendar");
@@ -187,7 +187,7 @@ describe("Today is the home page (addendum structure)", () => {
     const { env, db } = makeEnv();
     seedHealth(db);
     const home = await (await app.request("/", {}, env)).text();
-    const order = ["brief", "coach-impacting", "coach-drivers", "coach-actions", "ai-coach", "reports", "sleep-journal"];
+    const order = ["glance", "coach-impacting", "coach-drivers", "coach-actions", "ai-coach", "reports", "sleep-journal"];
     let last = -1;
     for (const s of order) {
       const i = home.indexOf(`data-section="${s}"`);

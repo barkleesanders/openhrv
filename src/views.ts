@@ -139,7 +139,9 @@ export interface TodayData {
   pressure: number | null;
   latest: Record<string, number | string> | null;
   history: Array<Record<string, number | string>>;
-  insights?: Array<{ severity: string; text: string }>;
+  /** Quick-glance strip numbers that don't live on a gauge or favorite:
+   *  the latest steps day and the latest scored day's stand hours. */
+  glance?: { steps: number | null; stepsDate: string | null; standHours: number | null } | null;
   showWelcome?: boolean;
   /** Which input drives today's gauges: a real RR measurement, or the
    *  imported Apple Health daily aggregates. */
@@ -203,49 +205,14 @@ export function spark(points: number[] | undefined, color: string, id: string, w
 
 export function todayPage(d: TodayData, sha = ""): string {
   const score = (v: number | null) => (v === null ? "—" : String(Math.round(v)));
-  const latest = d.latest
-    ? `<div class="card"><h2>Latest measurement</h2>
-       <div class="stat"><span>Heart rate</span><b>${Number(d.latest.mean_hr_bpm).toFixed(0)} bpm</b></div>
-       <div class="stat"><span>RMSSD</span><b>${Number(d.latest.rmssd_ms).toFixed(1)} ms</b></div>
-       <div class="stat"><span>SDNN</span><b>${Number(d.latest.sdnn_ms).toFixed(1)} ms</b></div>
-       <div class="stat"><span>pNN50</span><b>${Number(d.latest.pnn50_pct).toFixed(1)} %</b></div>
-       <div class="stat"><span>Stress index (Baevsky)</span><b>${Number(d.latest.baevsky_si).toFixed(0)}</b></div>
-       <div class="stat"><span>LF / HF</span><b>${Number(d.latest.lf_hf_ratio).toFixed(2)}</b></div>
-       <div class="stat"><span>Source</span><b>${String(d.latest.source)}</b></div>
-       <p><button class="ghost" id="shareLatest">Share this summary</button></p></div>
-<script>
-document.getElementById("shareLatest").addEventListener("click", function() {
-  var text = "OpenHRV — HR ${Number(d.latest.mean_hr_bpm).toFixed(0)} bpm · RMSSD ${Number(d.latest.rmssd_ms).toFixed(1)} ms · SDNN ${Number(d.latest.sdnn_ms).toFixed(1)} ms · stress index ${Number(d.latest.baevsky_si).toFixed(0)}";
-  if (navigator.share) navigator.share({ title: "OpenHRV measurement", text: text }).catch(function(){});
-  else if (navigator.clipboard) navigator.clipboard.writeText(text).then(function(){ document.getElementById("shareLatest").textContent = "Copied to clipboard"; });
-});
-</script>`
-    : d.healthLatest
-      ? `<div class="card"><h2>Latest from Apple Health</h2>
-       <div class="stat"><span>HRV (SDNN) · ${d.healthLatest.date}</span><b>${d.healthLatest.sdnnMs.toFixed(1)} ms</b></div>
-       ${d.healthLatest.restingHrBpm !== null ? `<div class="stat"><span>Resting heart rate</span><b>${d.healthLatest.restingHrBpm.toFixed(0)} bpm</b></div>` : ""}
-       ${d.healthLatest.sleepHours !== null ? `<div class="stat"><span>Last night's sleep</span><b>${d.healthLatest.sleepHours.toFixed(1)} h</b></div>` : ""}
-       <div class="stat"><span>Source</span><b>${String(d.healthLatest.source).replace(/</g, "&lt;")}</b></div>
-       <p class="sub">Today's gauges are computed from your imported daily Health aggregates. An in-app measurement adds beat-to-beat RMSSD, stress index and LF/HF detail.</p>
-       <p><a href="/measure"><button>Measure now</button></a></p></div>`
-      : `<div class="card"><h2>No measurements yet</h2><p class="sub">Take your first HRV measurement to light up this dashboard.</p><p><a href="/measure"><button>Measure now</button></a></p></div>`;
+  const esc = (s: string): string => s.replace(/</g, "&lt;");
+  const cp = d.coach ?? null;
   const sourceNote =
     d.scoreSource === "health"
       ? `<p class="sub" style="text-align:center">Gauges from Apple Health daily data · ${d.scoreAt ?? ""}</p>`
       : "";
-  const insights = d.insights && d.insights.length
-    ? `<div class="card"><h2>Insights</h2>${d.insights.map((i) => `<div class="stat"><span style="max-width:85%">${i.text.replace(/</g, "&lt;")}</span><b>${i.severity === "warn" ? "⚠" : i.severity === "good" ? "✓" : "ℹ"}</b></div>`).join("")}<p class="sub">Computed from your stored data only — see <a href="/lab" style="color:var(--acc)">Science Lab</a> for the correlations behind them.</p></div>`
-    : "";
   const welcome = d.showWelcome
     ? `<div class="card"><h2>Welcome to OpenHRV</h2><p class="sub">New here? The 2-minute setup tour explains data sources, permissions and notifications.</p><p><a href="/welcome"><button>Start the tour</button></a></p></div>`
-    : "";
-  const hist = d.history.length
-    ? `<div class="card"><h2>Recent</h2>${d.history
-        .map(
-          (m) =>
-            `<div class="stat"><span>${String(m.taken_at).slice(0, 16).replace("T", " ")} · ${String(m.source)}</span><b>RMSSD ${Number(m.rmssd_ms).toFixed(0)} ms</b></div>`,
-        )
-        .join("")}</div>`
     : "";
   // Health Summary "Favorites": category label + chevron, big value + unit,
   // context line, gradient sparkline — one card per headline metric.
@@ -279,16 +246,36 @@ document.getElementById("shareLatest").addEventListener("click", function() {
     fav("/mydata/health?metric=hrv_sdnn", "#ff3b30", ICONS.waveform, "HRV", hc ? hc.sdnnMs.toFixed(1) : d.latest ? Number(d.latest.sdnn_ms).toFixed(1) : "—", "ms", hc ? hc.date : "", d.trends?.sdnn, "h") +
     fav("/mydata/health?metric=resting_heart_rate", "#ff2d55", ICONS.heart, "Resting HR", hc && hc.restingHrBpm !== null ? hc.restingHrBpm.toFixed(0) : "—", "bpm", hc ? hc.date : "", d.trends?.rhr, "r") +
     fav("/sleep", "#5856d6", ICONS.moon, "Sleep", hc && hc.sleepHours !== null ? hc.sleepHours.toFixed(1) : "—", "h", hc ? hc.date : "", d.trends?.sleep, "z");
-  // ------------------------------------------------ Phase B: home feed
-  // Today is the home page: brief → coach → AI coach → hourly → reports →
-  // sleep + journal → favorites + impact → everything that lived in More.
-  const esc = (s: string): string => s.replace(/</g, "&lt;");
-  const cp = d.coach ?? null;
+  // --------------------------------------- Cleanup wave: home feed order
+  // Quick glance FIRST (the 5-second "how am I doing" block: gauge tiles +
+  // key-numbers strip, with the daily brief merged into its footer — the
+  // brief's numeric lines duplicate the glance numbers, so the footer
+  // carries the headline, the schedule-derived lines and Most important),
+  // then coach → AI coach → hourly → reports → sleep + journal →
+  // favorites + impact → everything that lived in More.
   const rows = (rs: Array<{ text: string; href?: string }>): string =>
     rs.map((r) => `<div class="stat"><span style="max-width:88%">${esc(r.text)}</span>${r.href ? `<a href="${r.href}" style="color:var(--acc);text-decoration:none">→</a>` : ""}</div>`).join("");
-  const brief = cp
-    ? `<div class="card" data-section="brief"><h2>Daily brief</h2><div class="gauge" style="font-size:24px">${esc(cp.headline)}</div>${cp.briefLines.map((l) => `<p class="sub" style="margin:4px 0">${esc(l)}</p>`).join("")}<p style="margin:8px 0 0"><b>Most important:</b> ${esc(cp.mostImportant)}</p></div>`
-    : "";
+  const glanceTiles =
+    fav("/battery", "#34c759", ICONS.bolt, "Battery", score(d.battery), d.battery === null ? "" : "%", gaugeCtx, undefined, "gb") +
+    fav("/stress", "#ff2d55", ICONS.gauge, "Stress", score(d.stress), d.stress === null ? "" : "%", gaugeCtx, undefined, "gs") +
+    fav("/pressure", "#ff9500", ICONS.dial, "Pressure", score(d.pressure), "", gaugeCtx, undefined, "gp");
+  const g = d.glance ?? null;
+  const stripRow = (label: string, value: string): string =>
+    value ? `<div class="stat"><span>${label}</span><b>${value}</b></div>` : "";
+  const glanceStrip =
+    stripRow(`HRV (SDNN)${hc ? ` · ${hc.date}` : ""}`, hc ? `${hc.sdnnMs.toFixed(1)} ms` : "") +
+    stripRow("Resting heart rate", hc && hc.restingHrBpm !== null ? `${hc.restingHrBpm.toFixed(0)} bpm` : "") +
+    stripRow("Last night's sleep", hc && hc.sleepHours !== null ? `${hc.sleepHours.toFixed(1)} h` : "") +
+    stripRow(`Steps${g && g.stepsDate && g.stepsDate !== (d.scoreAt ?? hc?.date) ? ` · ${g.stepsDate}` : ""}`, g && g.steps !== null ? `${Math.round(g.steps).toLocaleString("en-US")}` : "") +
+    stripRow("Stand hours", g && g.standHours !== null ? `${g.standHours} h` : "");
+  const glance =
+    d.battery !== null || d.stress !== null || d.pressure !== null || hc
+      ? `<div class="card" data-section="glance"><h2>Quick glance${d.scoreAt ? ` · ${d.scoreAt}` : ""}</h2><div class="favs" style="margin:0">${glanceTiles}</div>${glanceStrip}${
+          cp
+            ? `<div style="margin-top:10px"><div class="gauge" style="font-size:20px">${esc(cp.headline)}</div>${(cp.briefTail ?? []).map((l) => `<p class="sub" style="margin:4px 0">${esc(l)}</p>`).join("")}<p style="margin:8px 0 0"><b>Most important:</b> ${esc(cp.mostImportant)}</p></div>`
+            : ""
+        }</div>`
+      : "";
   const coachCards = cp
     ? `<div class="card" data-section="coach-impacting"><h2>What's impacting you</h2>${rows(cp.impacting)}</div>` +
       `<div class="card" data-section="coach-drivers"><h2>${esc(cp.driversTitle)}</h2>${rows(cp.drivers)}</div>` +
@@ -314,7 +301,7 @@ document.getElementById("shareLatest").addEventListener("click", function() {
   const journalRows = (d.journalPreview ?? [])
     .map((j) => `<div class="stat"><span style="max-width:85%">${esc(j.at)} · ${esc(j.text)}</span><a href="/journal" style="color:var(--acc);text-decoration:none">→</a></div>`)
     .join("");
-  const sleepJournal = `<div class="card" data-section="sleep-journal"><h2>Sleep &amp; journal</h2>${sleepCard}${journalRows || `<p class="sub">Nothing logged yet.</p>`}<div class="stat"><span><a href="/journal" style="color:var(--acc);text-decoration:none">Full journal timeline</a></span><b>→</b></div></div>`;
+  const sleepJournal = `<div class="card" data-section="sleep-journal"><h2>Sleep &amp; journal</h2>${sleepCard}${journalRows || (sleepCard ? "" : `<p class="sub">Nothing logged yet.</p>`)}<div class="stat"><span><a href="/journal" style="color:var(--acc);text-decoration:none">Full journal timeline</a></span><b>→</b></div></div>`;
   const explore = `<div class="card" data-section="explore"><h2>Explore</h2>
      <div class="stat"><span><a href="/reports" style="color:var(--acc);text-decoration:none">Reports</a></span><b>stress impact, activity, heart</b></div>
      <div class="stat"><span><a href="/sleep" style="color:var(--acc);text-decoration:none">Sleep</a></span><b>nights, stages, debt</b></div>
@@ -333,7 +320,7 @@ document.getElementById("shareLatest").addEventListener("click", function() {
   return layout(
     "today",
     "Today",
-    `${welcome}${brief}${coachCards}${aiCoach}${hourly}${reports}${sleepJournal}<h2 style="margin:14px 4px 0">Favorites</h2><div class="favs">${favs}</div>${sourceNote}<div class="card" style="padding:6px 16px"><a class="brow" href="/impact"><span class="bname">Factor Impact</span><span class="blat">what moves your numbers</span><span class="chev">${ICONS.chevron}</span></a></div>${insights}${explore}${latest}${hist}`,
+    `${welcome}${glance}${coachCards}${aiCoach}${hourly}${reports}${sleepJournal}<h2 style="margin:14px 4px 0">Favorites</h2><div class="favs">${favs}</div>${sourceNote}<div class="card" style="padding:6px 16px"><a class="brow" href="/impact"><span class="bname">Factor Impact</span><span class="blat">what moves your numbers</span><span class="chev">${ICONS.chevron}</span></a></div>${explore}`,
     sha,
   );
 }
@@ -517,7 +504,6 @@ export function myDataPage(sha = ""): string {
      <div class="stat"><span>Breathing sessions</span><b id="c-breathing">…</b></div>
      <div class="stat"><span>Self tests</span><b id="c-tests">…</b></div></div>
      <div class="card"><h2>Category details</h2><div id="cats"><p class="sub">Loading…</p></div></div>
-     <div class="card"><h2>Measurement history</h2><canvas id="chart" width="700" height="140"></canvas><div id="hist"></div></div>
      <div class="card"><h2>Import Apple Health</h2><p class="sub">Automated: Health Auto Export app → REST import. Also: iOS Shortcuts POST and export.xml upload — all set up in More → Settings &amp; connections, where your import token lives.</p><p><a href="/more#settings"><button class="ghost">Open import settings</button></a></p></div>
      <div class="card"><h2>Imported samples</h2><div id="samples"><p class="sub">Loading…</p></div></div>
 <script>
@@ -536,10 +522,6 @@ fetch("/api/mydata/categories").then(function(r){return r.json();}).then(functio
     return "<a class='brow' href='/mydata/" + cat.key + "'><span class='chip' style='background:" + chip[0] + "'>" + chip[1] + "</span><span class='bname'>" + cat.title + "</span><span class='blat'>" + (lat || "no samples yet") + "</span><span class='chev'>" + CHEV + "</span></a>";
   }).join("");
 });
-function shareText(text, btn) {
-  if (navigator.share) navigator.share({ title: "OpenHRV", text: text }).catch(function(){});
-  else if (navigator.clipboard) navigator.clipboard.writeText(text).then(function(){ btn.textContent = "Copied"; });
-}
 fetch("/api/mydata").then(function(r){return r.json();}).then(function(j) {
   ["measurements","sleep","journal","breathing","tests"].forEach(function(k){ document.getElementById("c-" + k).textContent = j.counts[k]; });
   fetch("/api/samples?limit=12").then(function(r){return r.json();}).then(function(s) {
@@ -547,13 +529,6 @@ fetch("/api/mydata").then(function(r){return r.json();}).then(function(j) {
       return "<div class='stat'><span>" + String(x.start_at).slice(0,16).replace("T"," ") + " · " + x.type + "</span><b>" + (x.value === null ? "" : Number(x.value).toFixed(1) + " " + x.unit) + " · " + x.source + "</b></div>";
     }).join("") : "<p class='sub'>No imported samples yet.</p>";
   });
-  var ms = j.measurements.slice().reverse();
-  document.getElementById("hist").innerHTML = j.measurements.map(function(m, i){ return "<div class='stat'><span>" + String(m.taken_at).slice(0,16).replace("T"," ") + " · " + m.source + "</span><b>" + Number(m.mean_hr_bpm).toFixed(0) + " bpm · RMSSD " + Number(m.rmssd_ms).toFixed(0) + "</b> <button class='ghost sharebtn' style='padding:2px 8px' data-i='" + i + "'>Share</button></div>"; }).join("") || "<p class='sub'>Nothing yet.</p>";
-  document.querySelectorAll(".sharebtn").forEach(function(b){ b.addEventListener("click", function(){ var m = j.measurements[Number(b.getAttribute("data-i"))]; shareText("OpenHRV " + String(m.taken_at).slice(0,10) + " — HR " + Number(m.mean_hr_bpm).toFixed(0) + " bpm · RMSSD " + Number(m.rmssd_ms).toFixed(1) + " ms · SDNN " + Number(m.sdnn_ms).toFixed(1) + " ms", b); }); });
-  var c = document.getElementById("chart"), x = c.getContext("2d");
-  if (ms.length > 1) { var vs = ms.map(function(m){return m.rmssd_ms;}), mn = Math.min.apply(null, vs), mx = Math.max.apply(null, vs);
-    x.strokeStyle = "#ff2d55"; x.lineWidth = 2; x.beginPath();
-    vs.forEach(function(v, i){ var px = i / (vs.length - 1) * c.width, py = c.height - (v - mn) / (mx - mn || 1) * (c.height - 10) - 5; i ? x.lineTo(px, py) : x.moveTo(px, py); }); x.stroke(); }
 });
 </script>`,
     sha,
