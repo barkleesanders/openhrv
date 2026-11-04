@@ -370,7 +370,7 @@ function submitRr(rr, source) {
   fetch("/api/measurements", { method: "POST", headers: {"content-type":"application/json"}, body: JSON.stringify({ rr_ms: rr, source: source }) })
     .then(function(r){ return r.json(); })
     .then(function(j){ if (!j.ok) throw new Error(j.error || "failed"); document.getElementById("msg").textContent = "Saved measurement #" + j.id; showResult(j.metrics); drawChart(rr); })
-    .catch(function(e){ document.getElementById("msg").innerHTML = "<span class='err'>" + e.message + "</span>"; });
+    .catch(function(){ document.getElementById("msg").innerHTML = "<span class='err'>Something went wrong \u2014 please try again.</span>"; });
 }
 document.getElementById("file").addEventListener("change", function(ev) {
   var f = ev.target.files[0]; if (!f) return;
@@ -401,7 +401,7 @@ document.getElementById("ble").addEventListener("click", function() {
       });
       return ch.startNotifications();
     })
-    .catch(function(e){ m.innerHTML = "<span class='err'>" + e.message + "</span>"; });
+    .catch(function(){ m.innerHTML = "<span class='err'>Something went wrong \u2014 please try again.</span>"; });
   document.getElementById("ble").onclick = function(){ if (rrFromBle.length >= 10) submitRr(rrFromBle.slice(), "bluetooth"); };
 });
 document.getElementById("cam").addEventListener("click", function() {
@@ -476,7 +476,7 @@ document.getElementById("vrec").addEventListener("click", function() {
         pendingVoiceId = j.id;
         m.textContent = "Voice note saved — it will attach to your next journal entry.";
         if (j.transcript) document.getElementById("vtranscript").innerHTML = "<p class='sub'>Transcript: " + String(j.transcript).replace(/</g,"&lt;") + "</p>";
-      }).catch(function(e){ m.innerHTML = "<span class='err'>" + e.message + "</span>"; });
+      }).catch(function(){ m.innerHTML = "<span class='err'>Something went wrong \u2014 please try again.</span>"; });
     };
     mediaRec.start();
     document.getElementById("vrec").disabled = true; document.getElementById("vstop").disabled = false;
@@ -645,7 +645,7 @@ document.getElementById("push").addEventListener("click", function() {
       m.textContent = j.ok ? "Notifications enabled on this device." : (j.error || "subscribe failed");
       loadNotifLog();
     });
-  }).catch(function(e){ m.innerHTML = "<span class='err'>" + e.message + "</span>"; });
+  }).catch(function(){ m.innerHTML = "<span class='err'>Something went wrong \u2014 please try again.</span>"; });
 });
 document.getElementById("pushtest").addEventListener("click", function() {
   var m = document.getElementById("pmsg");
@@ -1003,12 +1003,16 @@ document.getElementById("ask").addEventListener("click", function() {
   if (!q) return;
   bubble("user", q); document.getElementById("q").value = ""; m.textContent = "Thinking…";
   fetch("/api/coach", { method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify({ message: q, history: history }) })
-    .then(function(r){ return r.json(); }).then(function(j) {
+    .then(function(r){ return r.text(); }).then(function(t) {
+      // Defensive parse: an expired Access session answers with an HTML
+      // redirect page, not JSON \u2014 never print a raw platform string.
+      var j = null; try { j = JSON.parse(t); } catch (e) {}
+      if (!j) { m.innerHTML = "<span class='err'>The coach could not be reached \u2014 your session may have expired. Reload the page and try again.</span>"; return; }
       if (!j.ok) { m.innerHTML = "<span class='err'>" + (j.error || "coach unavailable") + "</span>"; return; }
       m.textContent = "";
       history.push({ role: "user", content: q }, { role: "assistant", content: j.reply });
       bubble("assistant", j.reply);
-    }).catch(function(e){ m.innerHTML = "<span class='err'>" + e.message + "</span>"; });
+    }).catch(function(){ m.innerHTML = "<span class='err'>The coach could not be reached \u2014 check your connection and try again.</span>"; });
 });
 </script>`,
     sha,

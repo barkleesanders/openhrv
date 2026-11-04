@@ -18,6 +18,19 @@ const num = (v: unknown): number | null => {
   return typeof n === "number" && Number.isFinite(n) ? n : null;
 };
 
+/** The real Health Auto Export app sends its own metric names
+ *  ("heart_rate_variability", "blood_oxygen_saturation", ...). Map them
+ *  onto OpenHRV's canonical sample types \u2014 without this, HAE-app data
+ *  lands under raw names that no gauge, chart or category ever reads
+ *  (found by the 2026-11-04 production sweep). external_id keeps the RAW
+ *  name, so dedup keys of already-synced rows never change. */
+const HAE_NAME_MAP: Record<string, string> = {
+  heart_rate_variability: "hrv_sdnn",
+  blood_oxygen_saturation: "spo2",
+  basal_energy_burned: "basal_energy",
+  walking_running_distance: "distance_walking_running",
+};
+
 /** Health Auto Export app JSON: { data: { metrics: [...], workouts: [...] } }
  *  (also accepts the metrics at top level). */
 export function parseHealthAutoExport(root: unknown, source = "health_auto_export"): NormalizedSample[] {
@@ -41,7 +54,7 @@ export function parseHealthAutoExport(root: unknown, source = "health_auto_expor
       const hourly = pt.granularity === "hourly";
       if (hourly) meta.granularity = "hourly";
       out.push({
-        type: name,
+        type: HAE_NAME_MAP[name] ?? name,
         value: num(pt.qty),
         unit: units,
         start_at: date,

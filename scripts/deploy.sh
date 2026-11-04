@@ -28,3 +28,14 @@ fi
 npm run check
 npx wrangler deploy --config wrangler.toml --var "GIT_SHA:$SHA"
 echo "deployed GIT_SHA=$SHA"
+
+# Production-truth smoke (added 2026-11-04): unit tests stub Workers AI,
+# so they cannot catch production binding/error-surface failures - the
+# smoke script is the mechanical gate that does. It prints its command
+# always; it RUNS when an Access service token is in env (create one
+# scoped to this app for the run, revoke it after).
+echo "deploy.sh: post-deploy production smoke:  SMOKE_ACCESS_CLIENT_ID=... SMOKE_ACCESS_CLIENT_SECRET=... node scripts/smoke.mjs"
+if [ -n "${SMOKE_ACCESS_CLIENT_ID:-}" ] && [ -n "${SMOKE_ACCESS_CLIENT_SECRET:-}" ]; then
+  echo "deploy.sh: running production smoke..."
+  node scripts/smoke.mjs || echo "deploy.sh: WARNING - smoke reported failures (deploy itself succeeded); investigate before calling this shipped"
+fi

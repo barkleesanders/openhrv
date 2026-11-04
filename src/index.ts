@@ -159,6 +159,22 @@ app.use("*", async (c, next) => {
   );
 });
 
+/** Global error surface: API clients must NEVER receive an HTML error
+ *  page or a raw platform message. (2026-11-04: the coach page rendered
+ *  the raw string "The string did not match the expected pattern." after
+ *  a non-JSON response met a client that printed e.message verbatim.)
+ *  The real error goes to the wide-event log only. */
+app.onError((err, c) => {
+  const u = new URL(c.req.url);
+  console.log(
+    JSON.stringify({ evt: "app_error", pathname: u.pathname, error: err instanceof Error ? err.message : String(err) }),
+  );
+  if (u.pathname.startsWith("/api/") || u.pathname.startsWith("/connect/")) {
+    return c.json({ ok: false, error: "Something went wrong on the server \u2014 please try again." }, 500);
+  }
+  return c.text("Something went wrong \u2014 please reload the page.", 500);
+});
+
 /** Owner lock: Cloudflare Access injects the authenticated email header.
  *  When present it must be the owner; Access itself blocks everyone else at
  *  the edge (unauthenticated requests never reach this Worker). */
@@ -1335,6 +1351,21 @@ app.post("/api/coach", async (c) => {
   );
   const count = async (t: string): Promise<number> => Number((await first(c.env.DB, `SELECT COUNT(*) AS n FROM ${t}`))?.n ?? 0);
   const journalRows = await all(c.env.DB, "SELECT created_at, mood FROM journal ORDER BY created_at DESC LIMIT 14");
+  const hDays = await healthDayInputs(c.env.DB);
+  const sdnnDays = hDays.filter((d) => d.sdnnMs !== null);
+  const lastSdnnDay = sdnnDays[sdnnDays.length - 1] ?? null;
+  const sdnnSorted = sdnnDays.map((d) => d.sdnnMs as number).sort((a, b) => a - b);
+  const sdnnMedian = sdnnSorted.length ? sdnnSorted[Math.floor(sdnnSorted.length / 2)] : null;
+  const aggregate = lastSdnnDay
+    ? {
+        date: lastSdnnDay.date,
+        sdnnMs: lastSdnnDay.sdnnMs,
+        sdnnBaselineMs: sdnnMedian,
+        restingHrBpm: lastSdnnDay.restingHrBpm,
+        sleepH: lastSdnnDay.sleepHours,
+        steps: lastSdnnDay.steps,
+      }
+    : null;
   const data: CoachData = {
     battery: td.battery,
     stress: td.stress,
@@ -1355,6 +1386,7 @@ app.post("/api/coach", async (c) => {
     drivers: td.coach
       ? [...td.coach.drivers.map((x) => x.text), ...td.coach.actions.map((x) => x.text), td.coach.mostImportant]
       : [],
+    aggregate,
     recentMoods: journalRows.map((j) => ({ date: String(j.created_at).slice(0, 10), mood: Number(j.mood) })),
     counts: {
       measurements: await count("measurements"),
@@ -1380,7 +1412,10 @@ app.post("/api/coach", async (c) => {
     if (!reply) return c.json({ ok: false, error: "The coach returned an empty answer — try again." }, 502);
     return c.json({ ok: true, reply });
   } catch (e) {
-    return c.json({ ok: false, error: `Workers AI call failed: ${e instanceof Error ? e.message : "unknown error"}` }, 502);
+    // Raw platform/AI messages never reach the UI (2026-11-04 screenshot).
+    // The detail is logged server-side as a wide event instead.
+    console.log(JSON.stringify({ evt: "coach_error", error: e instanceof Error ? e.message : String(e) }));
+    return c.json({ ok: false, error: "The coach couldn\u2019t answer just now \u2014 please try again in a moment." }, 502);
   }
 });
 

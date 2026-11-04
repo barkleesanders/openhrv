@@ -20,6 +20,18 @@ export interface CoachData {
   /** Phase B: today's deterministic stress drivers + actions from the
    *  Today coach panel, so chat answers use the same evidence lines. */
   drivers?: string[];
+  /** Latest Apple Health aggregate day — where most of the owner's HRV
+   *  actually lives (daily SDNN). Without it the coach falsely claims no
+   *  HRV data exists while the dashboard shows SDNN (production bug,
+   *  2026-11-04). */
+  aggregate?: {
+    date: string;
+    sdnnMs: number | null;
+    sdnnBaselineMs: number | null;
+    restingHrBpm: number | null;
+    sleepH: number | null;
+    steps: number | null;
+  } | null;
   recentMoods: Array<{ date: string; mood: number }>;
   counts: { measurements: number; sleep: number; journal: number; breathing: number; tests: number };
 }
@@ -45,7 +57,27 @@ export function buildCoachContext(d: CoachData): string {
       `Latest measurement ${String(m.taken_at).slice(0, 16).replace("T", " ")} via ${m.source}: HR ${r1(m.mean_hr_bpm)} bpm, RMSSD ${r1(m.rmssd_ms)} ms, SDNN ${r1(m.sdnn_ms)} ms.`,
     );
   } else {
-    lines.push("No measurements stored yet.");
+    lines.push(
+      d.aggregate
+        ? "No RR measurements stored yet \u2014 the HRV figures below come from Apple Health daily aggregates (SDNN)."
+        : "No measurements stored yet.",
+    );
+  }
+  if (d.aggregate) {
+    const a = d.aggregate;
+    const parts: string[] = [];
+    if (a.sdnnMs !== null) {
+      let s = `HRV (SDNN) ${r1(a.sdnnMs)} ms`;
+      if (a.sdnnBaselineMs !== null && a.sdnnBaselineMs > 0) {
+        const pct = Math.round(((a.sdnnMs - a.sdnnBaselineMs) / a.sdnnBaselineMs) * 100);
+        s += ` (personal baseline median ${r1(a.sdnnBaselineMs)} ms, ${pct >= 0 ? "+" : ""}${pct}%)`;
+      }
+      parts.push(s);
+    }
+    if (a.restingHrBpm !== null) parts.push(`resting HR ${r1(a.restingHrBpm)} bpm`);
+    if (a.sleepH !== null) parts.push(`sleep ${a.sleepH.toFixed(1)} h`);
+    if (a.steps !== null) parts.push(`steps ${Math.round(a.steps)}`);
+    if (parts.length) lines.push(`Latest Apple Health day ${a.date}: ${parts.join(", ")}.`);
   }
   const last14 = d.days.slice(-14);
   if (last14.length) {

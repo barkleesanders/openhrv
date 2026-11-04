@@ -96,7 +96,7 @@ D1–D8.
 | 2 | Artifact filtering (§g) | Cleaning spec §1 above; removal count reported per measurement | D3 | pass |
 | 3 | Camera PPG measurement (§b,g) | Measure page: getUserMedia fingertip PPG, peak detection → RR → engine; clear unsupported-browser fallback | D3 | pass |
 | 4 | BLE chest-strap measurement (§b,g) | Web Bluetooth Heart Rate service, RR (1/1024 s units) streamed live → engine; fallback message where unsupported | D3 | pass |
-| 5 | **Health Auto Export REST import** (§b,g — D4 primary pipe) | `POST /api/import/health-auto-export` accepts the Health Auto Export app's JSON (metrics array: HRV SDNN, resting HR, heart rate, sleep analysis, BP, SpO2, respiratory rate, steps, workouts…), gated by a per-owner bearer import token (shown in Settings with copy button + in-app setup instructions). Samples land in the normalized store | D4 | pass |
+| 5 | **Health Auto Export REST import** (§b,g — D4 primary pipe) | `POST /api/import/health-auto-export` accepts the Health Auto Export app's JSON (metrics array: HRV SDNN, resting HR, heart rate, sleep analysis, BP, SpO2, respiratory rate, steps, workouts…), gated by a per-owner bearer import token (shown in Settings with copy button + in-app setup instructions). Samples land in the normalized store. Production-truth fix 2026-11-04: the real Health Auto Export app's own metric names (heart_rate_variability, blood_oxygen_saturation, basal_energy_burned, walking_running_distance) are normalized onto the canonical sample types — before this they landed under raw names no gauge or chart reads; external_id keeps the raw name so existing dedup keys never change | D4 | pass |
 | 6 | **iOS Shortcuts import** (§b,g) | `POST /api/import/shortcut` (same import token) accepts flexible JSON health samples; the Shortcut recipe (read HRV/health in Shortcuts → POST) is documented in-app on the Import/Settings screen | D4 | pass |
 | 7 | **Apple Health export.xml upload** (§b,g) | Settings/Import page file upload; Record elements parsed into the normalized store (HR, HRV SDNN, BP, sleep, steps…) with source=apple_health | D4 | pass |
 | 8 | **Normalized samples store** (§g) | One `health_samples` store keyed by type + source (apple_health / strava / manual / ble / ppg / shortcut), feeding Today, gauges, scores and factor impact; source attribution preserved on every sample (read path connected in the 2026-11-03 fix wave: healthDays → scoreHealthDays merge; before that the gauges read only the measurements table and the claim was write-side only) | D4 | pass |
@@ -119,7 +119,7 @@ D1–D8.
 | 25 | Self-tests / Self-Discovery (§b) | `/tests` page + `POST/GET /api/self-tests` over the `self_tests` store: reaction time (5 randomized-wait trials, mean/median/best), finger tapping (30 s count + taps/sec), breath hold (timed, with safety copy), orthostatic (lying vs standing measurement comparison), HRV episode (baseline → 2-min paced breathing → post, RMSSD delta). Real timing/scoring in the browser; results trended on the page; wave-2 tests cover storage + validation | D5 | pass |
 | 26 | Science Lab — experiments & correlations (§b) | `/lab` + `GET /api/lab`: per-day series built from measurements (RMSSD/HR/Battery/Stress/pressure), sleep duration, steps and journal tags; Pearson correlations for every pair with ≥5 shared days, ranked by strength, plus an X/Y scatter explorer; wave-2 tests verify day-building and r values against hand-computed expectations (gate n≥5, zero-variance → none) | D5 | pass |
 | 27 | Insights (§b) | Rule-based insights engine computed from the owner's stored data: data gaps, RMSSD vs baseline (≥10%), Battery 3-reading trend, high-stress streaks, sleep→next-day-RMSSD relation, sleep debt, logged deep-breathing effect; wave-2 tests cover the rules incl. the sleep→RMSSD direction. Cleanup wave 2026-11-04: the Today Insights CARD was removed — on production data it rendered only its empty state ("No measurements yet — take your first HRV reading…") because it read the measurements table (0 production rows), and its populated content duplicated the Coach panel. The engine (src/lab.ts generateInsights) and its unit tests stay; the card does not | D5 | pass |
-| 28 | AI Coach chat (§b) | `/coach` + `POST /api/coach`: Workers AI binding (`env.AI`, model var `COACH_MODEL`), system prompt restricts answers to a context block computed from the owner's own data (gauges, trends, sleep, lab correlations, journal factors) with a clear not-medical-advice framing; feature-flag gated (403 when off), 503 when no AI binding; wave-2 tests verify flag/binding behavior and that the context block carries the owner's numbers. Live inference uses Cloudflare Workers AI on the owner's account | D5 | pass |
+| 28 | AI Coach chat (§b) | `/coach` + `POST /api/coach`: Workers AI binding (`env.AI`, model var `COACH_MODEL`), system prompt restricts answers to a context block computed from the owner's own data (gauges, trends, sleep, lab correlations, journal factors) with a clear not-medical-advice framing; feature-flag gated (403 when off), 503 when no AI binding; wave-2 tests verify flag/binding behavior and that the context block carries the owner's numbers. Live inference uses Cloudflare Workers AI on the owner's account. Production-truth fixes 2026-11-04: (1) the context now includes the latest Apple Health aggregate day (SDNN + baseline-median delta, RHR, sleep, steps) — before this, the coach told the owner “no HRV data stored” while his dashboard showed SDNN 165.7 ms, because the context only carried RR measurements (0 in production); (2) error surface hardened end-to-end after the owner hit the raw platform string “The string did not match the expected pattern.” on the coach page: AI failures map to a human message (detail logged server-side as a wide event), a global onError returns JSON for API routes (never an HTML error page), and the coach page parses responses defensively (an expired Access session answers with an HTML redirect — never print raw platform text). Regression tests: test/coachfix.test.ts | D5 | pass |
 | 29 | News / stories content (§b) | `/stories`: five original explainer cards (what HRV measures, breathing and HRV, sleep and readiness, caffeine/alcohol evidence, spotting artifacts) — all copy written for OpenHRV, no third-party content service | D5 | pass |
 | 30 | Onboarding (§b,c) | `/welcome` first-run flow (5 steps: what it measures, ways to measure, connect Apple Health pipes, notifications, privacy) shown on Today until dismissed (persisted `onboarded` setting); relaunchable from More | D5 | pass |
 | 31 | Accounts / auth (§b,i) | Platform translation: Cloudflare Access single-owner lock; owner email is the identity; no passwords stored | D2 | pass |
@@ -585,3 +585,42 @@ removed panels' markup strings are absent, the categories API hides
 empty categories / trace metrics, and data-less category pages
 redirect. Section-order test updated to the new order. Full suite
 170/170 (17 files).
+
+## Ship evidence — 2026-11-04 (production-truth sweep)
+
+- Trigger: the owner screenshotted the AI Coach page showing the raw error
+  "The string did not match the expected pattern." on build 1773244 despite
+  170/170 unit tests — the tests stub Workers AI, and no ship gate ever
+  exercised the real binding or the error surface.
+- Root cause: the ask path itself was healthy (reproduced 5/5 against
+  production and 6/6 against `wrangler dev --remote` with the real AI
+  binding + production D1, via a temporary Access service token). The raw
+  string reached the screen because a NON-JSON response (an expired Access
+  session answers POST /api/coach with a 302 HTML page — reproduced)
+  hit the page's `r.json()` and the catch printed `e.message` verbatim
+  (WebKit's message for that failure). Every server JSON error path carries
+  a human sentence, so the bare string could only arrive client-side.
+  Fixes in src/views.ts (defensive parse + human catch), src/index.ts
+  (global onError → JSON for API routes; coach AI failures mapped to a
+  human message with the detail in the wide-event log), src/coach.ts +
+  src/index.ts (aggregate-HRV grounding), src/import.ts (HAE name
+  normalization). Regression tests: test/coachfix.test.ts (6 tests).
+- Full sweep against production (temporary Access service token, created
+  → used → revoked in the same run; human owner policy untouched):
+  25/25 pages, all read APIs, measurement lifecycle (POST→GET→page→
+  DELETE), journal/breathing/self-tests/feedback writes (cleaned), voice
+  note round-trip incl. real Whisper transcription, push subscribe→list
+  →unsubscribe + test send delivered (web.push.apple.com, HTTP 201),
+  WebMCP, Watch lanes (token + 401), imports (HAE dedup proven on a
+  sync-faithful payload: inserted=0 twice; shortcut; export.xml; calendar
+  idempotent), exports (JSON/CSV/write-back), Strava (status, sync,
+  streams backfill 47, webhook verify 403 + bogus-activity POST graceful),
+  account-delete guard (400 without the exact confirm — never executed),
+  cron (production notification_log evidence). Failures found and fixed:
+  the three above; two sweep-checker artifacts (export JSON has no `ok`
+  field by design; invalid self-test type correctly 400s) were verified
+  as correct app behavior.
+- Mechanical gate added: `scripts/smoke.mjs` (post-deploy production
+  checks; coach check requires an Access service token in env and SKIPS
+  LOUDLY without one). scripts/deploy.sh prints the smoke command after
+  every deploy and runs it when SMOKE_* env is present.
