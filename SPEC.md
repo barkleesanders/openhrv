@@ -384,3 +384,92 @@ Directive: hourly data in the charts, more granular and labeled better
   Health Day hourly charts, workout HR chart, Sleep, Battery Day.
   Verdict: axes/captions legible, real density; one defect found and
   fixed in-wave (axis title clipped in the gutter -> 3b52d90).
+
+## Phase 2 — reports, scores, journal (2026-11-04)
+
+Feature patterns modeled on mainstream HRV apps (per-day report
+structure, trio score presentation, day-grouped journal) — behavior
+replicated, all code, formulas and wording original (clean-room).
+Nothing in OpenHRV is ever locked, blurred or sampled: every section
+renders in full for the owner.
+
+- Reports hub (/reports) with Latest/Days/Weeks/Months ranges.
+- Stress Impact (/reports/stress): per-day mini-gauge strip; stats
+  Stress level / Morning level / Stress minutes. Stationary stress =
+  an hour whose mean HR >= resting baseline x 1.2 with < 50 steps;
+  each qualifying hour counts in full (hourly resolution, labeled).
+  Morning level = mean positive HR elevation (%) over the first three
+  hours with data from 04:00. Days without hourly buckets show the
+  daily-aggregate stress level and mark minutes/morning unavailable —
+  never estimated. Explainer text is original.
+- Activity (/reports/activity): Active time, Active METs, Active cal,
+  Sedentary, Steps, Total cal, Intense time, Intense METs, Stand hours.
+  Stand hour = >= 100 steps in the hour. Sedentary = hours 06:00-22:00
+  outside sleep with < 100 steps. Intense = HR >= resting + 0.75 x
+  (observed max - resting). MET estimate: MET level = 1 + 9 x HR
+  reserve fraction (resting -> observed max), MET-minutes summed over
+  active hours; labeled an estimate wherever shown. No weight input is
+  used or assumed.
+- Heart report (/reports/heart?date=): the days hourly HR segmented
+## Phase 2 — reports, scores, journal (2026-11-04)
+
+Feature patterns modeled on mainstream HRV apps (per-day report
+structure, trio score presentation, day-grouped journal) — behavior
+replicated, all code, formulas and wording original (clean-room).
+Nothing in OpenHRV is ever locked, blurred or sampled: every section
+renders in full for the owner.
+
+- Reports hub (/reports) with Latest/Days/Weeks/Months ranges.
+- Stress Impact (/reports/stress): per-day mini-gauge strip; stats
+  Stress level / Morning level / Stress minutes. Stationary stress =
+  an hour whose mean HR >= resting baseline x 1.2 with < 50 steps;
+  each qualifying hour counts in full (hourly resolution, labeled).
+  Morning level = mean positive HR elevation (%) over the first three
+  hours with data from 04:00. Days without hourly buckets show the
+  daily-aggregate stress level and mark minutes/morning unavailable —
+  never estimated. Explainer text is original.
+- Activity (/reports/activity): Active time, Active METs, Active cal,
+  Sedentary, Steps, Total cal, Intense time, Intense METs, Stand hours.
+  Stand hour = >= 100 steps in the hour. Sedentary = hours 06:00-22:00
+  outside sleep with < 100 steps. Intense = HR >= resting + 0.75 x
+  (observed max - resting). MET estimate: MET level = 1 + 9 x HR
+  reserve fraction (resting -> observed max), MET-minutes summed over
+  active hours; labeled an estimate wherever shown. No weight input is
+  used or assumed.
+- Heart report (/reports/heart?date=): the day's hourly HR segmented
+  Sleep / Exercise / Mindfulness / Move / Rest (priority exercise >
+  mindfulness > sleep > move > rest), segment-colored runs with a
+  legend, peak callout, generated one-line summary. Workout hours with
+  a stored Strava stream use the stream's per-hour means and the
+  stream's true max for the peak (disclosed in the summary).
+- Health score: 50% SDNN vs personal baseline (log form), 25% resting
+  HR vs baseline, 25% sleep duration vs own median; missing parts
+  renormalize; nothing known -> no score. Focus: real LF/HF form
+  (peak at ratio 1.6) on measurement days; SDNN/RHR proxy on aggregate
+  days, labeled estimate in the UI wherever used.
+- Trio presentation (Stress / Energy / Health: value + state label +
+  state-colored underline) on measurement and day detail pages.
+  Measurement accuracy = share of RR intervals kept after artifact
+  filtering, recomputed from the stored RR series.
+- Breakdown sections (Health / Focus / Energy / Stress / Nervous
+  system balance / HRV Score): value, state, delta-vs-baseline chip
+  (scores: vs mean of prior 14 days; HRV: vs personal baseline),
+  generated text, trend chart. ANS balance: LF/HF share when a
+  spectrum exists, SDNN proxy otherwise (labeled). Latest-results
+  multiline chart: Stress/Energy/Health over the last 14 scored days.
+- Key Insights: generated per day/measurement from the actual numbers
+  (score pairing, SDNN delta vs baseline, sleep duration, stationary
+  stress minutes, resting-HR elevation) — original wording, templates
+  in reports.ts keyInsights(), capped at 4 statements, each backed by
+  a stored value.
+- Journal (/journal): calendar strip with per-day charge orbs, then a
+  day-grouped reverse-chronological feed mixing measurement trio
+  cards, SDNN sample cards, workout cards, sleep cards (sorted by
+  wake time), breathing cards and the owner's notes — timestamped,
+  source-tagged, each linking to its detail. The composer and voice
+  notes remain above the feed.
+- Tests: 148/148 (14 files) — stress-minutes/stationary fixtures,
+  stand hours + sedentary + MET estimate, Health/Focus vs fixture
+  days, ANS both bases, heart-day segmentation priority, journal
+  ordering/mixing/orbs, chart label gates for the new multi-line /
+  bar / segmented / mini-gauge components, scripts-parse gate.

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { lineChart, stageBar, type ChartPoint } from "../src/chart";
+import { barChart, lineChart, miniGauge, multiLineChart, segmentChart, stageBar, type ChartPoint } from "../src/chart";
+import { HEART_STATE_COLORS, HEART_STATE_LABELS } from "../src/reports";
 import { hourlyPoints, dailyPoints, baselineMedian, seriesCaption, type SeriesRow } from "../src/series";
 import { healthDays } from "../src/healthdays";
 import { parseHealthAutoExport } from "../src/import";
@@ -220,5 +221,73 @@ describe("workout page", () => {
       hasStream: false,
     });
     expect(without).toContain("No heart-rate stream stored");
+  });
+});
+
+describe("phase 2 chart types", () => {
+  it("multiLineChart labels axes, names every series in the legend, and combines the crosshair payload", () => {
+    const days = ["2026-11-01", "2026-11-02", "2026-11-03"];
+    const mk = (vs: number[]) => days.map((d, i) => ({ v: vs[i], label: d, full: d }));
+    const html = multiLineChart({
+      id: "ml",
+      unit: "%",
+      yLabel: "Score (%)",
+      series: [
+        { label: "Stress", color: "#ff453a", points: mk([30, 44, 20]) },
+        { label: "Energy", color: "#34c759", points: mk([70, 66, 80]) },
+        { label: "Health", color: "#0a84ff", points: mk([75, 72, 78]) },
+      ],
+    });
+    expect(html).toContain("Score (%)");
+    expect(html).toContain('class="chart-grid"');
+    expect(html).toContain("Stress 20 %");
+    expect(html).toContain("Health 78 %");
+    expect(html).toContain("Energy 66");
+  });
+
+  it("barChart draws bars with labeled axes and a max callout", () => {
+    const html = barChart({
+      id: "bars",
+      unit: "steps",
+      color: "#34c759",
+      yLabel: "Steps",
+      points: [
+        { v: 4000, label: "11-01", full: "2026-11-01 · 4,000 steps" },
+        { v: 9500, label: "11-02", full: "2026-11-02 · 9,500 steps" },
+      ],
+    });
+    expect(html).toContain("<rect");
+    expect(html).toContain("max 9500 steps");
+    expect(html).toContain("Steps");
+  });
+
+  it("segmentChart colors runs by state and legends every state present", () => {
+    const html = segmentChart({
+      id: "seg",
+      unit: "bpm",
+      yLabel: "Heart rate (bpm)",
+      segColors: HEART_STATE_COLORS,
+      segLabels: HEART_STATE_LABELS,
+      points: [
+        { v: 52, label: "03:00", full: "03:00 · 52 bpm · Sleep", seg: "sleep" },
+        { v: 55, label: "04:00", full: "04:00 · 55 bpm · Sleep", seg: "sleep" },
+        { v: 150, label: "12:00", full: "12:00 · 150 bpm · Exercise", seg: "exercise" },
+        { v: 70, label: "15:00", full: "15:00 · 70 bpm · Rest", seg: "rest" },
+      ],
+    });
+    expect(html).toContain('stroke="#0a84ff"'); // sleep blue run
+    expect(html).toContain('stroke="#34c759"'); // exercise green run
+    expect(html).toContain("Sleep");
+    expect(html).toContain("Exercise");
+    expect(html).toContain("max 150 bpm");
+  });
+
+  it("miniGauge renders needle + value arc; null renders a hollow glyph", () => {
+    const g = miniGauge(29, "#ffcc00");
+    expect(g).toContain("<line");
+    expect(g).toContain('stroke="#ffcc00"');
+    expect(g).toContain('aria-label="Gauge 29 percent"');
+    const empty = miniGauge(null, "#ffcc00");
+    expect(empty).not.toContain("<line");
   });
 });

@@ -382,7 +382,7 @@ document.getElementById("cam").addEventListener("click", function() {
   );
 }
 
-export function journalPage(sha = ""): string {
+export function journalPage(sha = "", feedHtml = ""): string {
   return layout(
     "journal",
     "Journal",
@@ -395,21 +395,13 @@ export function journalPage(sha = ""): string {
      <p><button class="ghost" id="vrec">● Record</button> <button class="ghost" id="vstop" disabled>Stop</button></p>
      <audio id="vprev" controls style="width:100%;display:none"></audio>
      <p class="msg" id="vmsg"></p><div id="vtranscript"></div></div>
-     <div class="card"><h2>Entries</h2><div id="list"><p class="sub">Loading…</p></div></div>
+     ${feedHtml}
 <script>
 var pendingVoiceId = null;
-function load() {
-  fetch("/api/journal").then(function(r){return r.json();}).then(function(j) {
-    document.getElementById("list").innerHTML = j.entries.length ? j.entries.map(function(e) {
-      var audio = e.voice_note_id ? "<audio controls preload='none' style='width:100%' src='/api/voice/" + e.voice_note_id + "/audio'></audio>" : "";
-      return "<div class='stat'><span>" + String(e.created_at).slice(0,16).replace("T"," ") + "</span><b>" + e.mood + "/10</b></div><p style='margin:4px 0'>" + e.body.replace(/</g,"&lt;") + "</p>" + audio + (e.tags || []).map(function(t){return "<span class='tag'>" + t + "</span>";}).join("");
-    }).join("") : "<p class='sub'>No entries yet.</p>";
-  });
-}
 document.getElementById("add").addEventListener("click", function() {
   var tags = document.getElementById("tags").value.split(",").map(function(s){return s.trim();}).filter(Boolean);
   fetch("/api/journal", { method: "POST", headers: {"content-type":"application/json"}, body: JSON.stringify({ body: document.getElementById("body").value, mood: 5, tags: tags, voice_note_id: pendingVoiceId }) })
-    .then(function(r){return r.json();}).then(function(j){ document.getElementById("msg").textContent = j.ok ? "Saved." : (j.error || "failed"); pendingVoiceId = null; load(); });
+    .then(function(r){return r.json();}).then(function(j){ document.getElementById("msg").textContent = j.ok ? "Saved." : (j.error || "failed"); if (j.ok) location.reload(); });
 });
 var mediaRec = null, chunks = [], recStarted = 0;
 document.getElementById("vrec").addEventListener("click", function() {
@@ -508,6 +500,7 @@ export function morePage(sha = ""): string {
     `<div class="card"><h2>Breathing</h2><p class="sub">Guided box breathing — inhale 4 s, hold 4 s, exhale 4 s, hold 4 s.</p>
      <div class="gauge" id="phase" style="font-size:22px">Ready</div><p><button id="bstart">Start 2-minute session</button></p><p class="msg" id="bmsg"></p></div>
      <div class="card"><h2>Explore</h2>
+     <div class="stat"><span><a href="/reports" style="color:var(--acc);text-decoration:none">Reports</a></span><b>stress impact, activity, heart</b></div>
      <div class="stat"><span><a href="/sleep" style="color:var(--acc);text-decoration:none">Sleep</a></span><b>nights, stages, debt</b></div>
      <div class="stat"><span><a href="/tests" style="color:var(--acc);text-decoration:none">Self-tests</a></span><b>Self-Discovery set</b></div>
      <div class="stat"><span><a href="/lab" style="color:var(--acc);text-decoration:none">Science Lab</a></span><b>correlations</b></div>
@@ -1263,4 +1256,239 @@ export function workoutPage(w: WorkoutVm, sha = ""): string {
 <script>${CHART_JS}</script>`,
     sha,
   );
+}
+
+// ------------------------------------------------------------- Phase 2 pages
+import type { FeedDay } from "./journalfeed";
+import { orbColor } from "./journalfeed";
+
+const escT = (s: string): string => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+export interface TrioCell {
+  name: string;
+  value: number | null;
+  state: string;
+  color: string;
+}
+
+/** The trio header: Stress / Energy / Health (or Focus) — big value,
+ *  name, state label underlined in its state color. */
+export function trioHtml(cells: TrioCell[]): string {
+  return `<div class="trio">${cells
+    .map(
+      (c) =>
+        `<div class="tcell"><div class="tval">${c.value === null ? "—" : Math.round(c.value) + "%"}</div><div class="tname">${escT(c.name)}</div><span class="tstate" style="border-bottom-color:${c.color}">${c.value === null ? "No data" : escT(c.state)}</span></div>`,
+    )
+    .join("")}</div>`;
+}
+
+export interface SectionVm {
+  name: string;
+  value: string;
+  state: string;
+  stateColor: string;
+  deltaPct: number | null;
+  invert?: boolean; // stress/pressure: a rise is not an improvement
+  text: string;
+  chartHtml: string;
+}
+
+export function sectionsHtml(sections: SectionVm[]): string {
+  return sections
+    .map((s) => {
+      const chip =
+        s.deltaPct === null
+          ? ""
+          : `<span class="chip" style="color:${(s.deltaPct >= 0) !== !!s.invert ? "#34c759" : "#ff453a"}">${s.deltaPct >= 0 ? "+" : ""}${Math.round(s.deltaPct)}%</span>`;
+      return `<details class="sect"><summary><span class="sval">${escT(s.value)}</span><span><span class="sname">${escT(s.name)}</span><br><span class="sstate" style="color:${s.stateColor}">${escT(s.state)}</span></span>${chip}</summary><div class="sbody"><p class="sub" style="text-align:left">${escT(s.text)}</p>${s.chartHtml}</div></details>`;
+    })
+    .join("");
+}
+
+/** ANS balance visual: parasympathetic (blue) grows from the bottom,
+ *  sympathetic (red) caps the top — the stacked-bar pattern, one bar. */
+export function ansBarHtml(symPct: number, paraPct: number, basisLabel: string): string {
+  return `<div class="answrap"><div class="ansbar"><div class="ans-para" style="height:${paraPct}%"></div><div class="ans-sym" style="height:${symPct}%"></div></div>
+  <div><div class="stat"><span>Parasympathetic (rest &amp; digest)</span><b>${paraPct}%</b></div>
+  <div class="stat"><span>Sympathetic (fight or flight)</span><b>${symPct}%</b></div>
+  <p class="sub" style="text-align:left">${escT(basisLabel)}</p></div></div>`;
+}
+
+const REPORT_RANGES: Array<[string, string]> = [
+  ["latest", "Latest"],
+  ["days", "Days"],
+  ["weeks", "Weeks"],
+  ["months", "Months"],
+];
+
+const reportRangeLinks = (base: string, range: string): string =>
+  `<div class="seg" role="group" aria-label="Range">${REPORT_RANGES.map(([v, l]) => `<a href="${base}?range=${v}"${v === range ? ' class="on"' : ""}>${l}</a>`).join("")}</div>`;
+
+export function reportsHubPage(sha = ""): string {
+  return layout(
+    "more",
+    "Reports",
+    `<div class="favcard"><a class="favmain" href="/reports/stress"><span class="favname">Stress Impact</span><span class="favsub">which hours your heart worked hard while you sat still</span></a></div>
+     <div class="favcard"><a class="favmain" href="/reports/activity"><span class="favname">Activity</span><span class="favsub">active time, stand hours, intensity and energy</span></a></div>
+     <div class="favcard"><a class="favmain" href="/reports/heart"><span class="favname">Heart</span><span class="favsub">a full day of heart rate, colored by what you were doing</span></a></div>
+     <p class="sub">Reports read the hourly buckets and daily aggregates your imports already store. Nothing here is locked or sampled — every number traces to a stored sample, and anything estimated says so.</p>`,
+    sha,
+  );
+}
+
+export interface StressImpactVm {
+  range: string;
+  stripHtml: string;
+  selTitle: string;
+  stressLevel: number | null;
+  morning: number | null;
+  stressMinutes: number | null;
+  basisNote: string;
+  explainer: string;
+}
+
+export function stressImpactPage(vm: StressImpactVm, sha = ""): string {
+  const stat = (name: string, value: string) => `<div class="sg"><div class="sgn">${name}</div><div class="sgv">${value}</div></div>`;
+  return layout(
+    "more",
+    "Stress Impact",
+    `<div class="card"><h2>Stress Impact</h2>
+     ${reportRangeLinks("/reports/stress", vm.range)}
+     <div class="gaugestrip">${vm.stripHtml}</div>
+     <h3 style="margin-top:10px">${escT(vm.selTitle)}</h3>
+     <div class="statgrid">
+       ${stat("Stress level", vm.stressLevel === null ? "—" : `${Math.round(vm.stressLevel)}%`)}
+       ${stat("Morning level", vm.morning === null ? "—" : `${vm.morning}%`)}
+       ${stat("Stress minutes", vm.stressMinutes === null ? "—" : `${vm.stressMinutes} m`)}
+     </div>
+     <p class="sub" style="text-align:left">${escT(vm.basisNote)}</p></div>
+     <div class="card"><h2>What counts as stress here</h2><p class="sub" style="text-align:left">${escT(vm.explainer)}</p></div>`,
+    sha,
+  );
+}
+
+export interface ActivityVm {
+  range: string;
+  title: string;
+  stats: Array<{ name: string; value: string }>;
+  barsHtml: string;
+  caption: string;
+  note: string;
+}
+
+export function activityReportPage(vm: ActivityVm, sha = ""): string {
+  return layout(
+    "more",
+    "Activity Report",
+    `<div class="card"><h2>Activity</h2>
+     ${reportRangeLinks("/reports/activity", vm.range)}
+     <h3 style="margin-top:10px">${escT(vm.title)}</h3>
+     <div class="statgrid">${vm.stats.map((s) => `<div class="sg"><div class="sgn">${escT(s.name)}</div><div class="sgv">${escT(s.value)}</div></div>`).join("")}</div>
+     <p class="sub" style="text-align:left">${escT(vm.note)}</p></div>
+     <div class="card"><h2>Steps by day</h2>${vm.barsHtml}<p class="chart-caption">${escT(vm.caption)}</p></div>`,
+    sha,
+  );
+}
+
+export interface HeartReportVm {
+  date: string;
+  prevDate: string | null;
+  nextDate: string | null;
+  chartHtml: string;
+  summary: string;
+  peakText: string;
+}
+
+export function heartReportPage(vm: HeartReportVm, sha = ""): string {
+  const nav = `<div class="daynav">${vm.prevDate ? `<a href="/reports/heart?date=${vm.prevDate}">‹ ${vm.prevDate}</a>` : "<span></span>"}<b>${escT(vm.date)}</b>${vm.nextDate ? `<a href="/reports/heart?date=${vm.nextDate}">${vm.nextDate} ›</a>` : "<span></span>"}</div>`;
+  return layout(
+    "more",
+    "Heart Report",
+    `<div class="card"><h2>Heart report</h2>${nav}${vm.chartHtml}
+     <div class="stat"><span>Peak</span><b>${escT(vm.peakText)}</b></div>
+     <p class="sub" style="text-align:left">${escT(vm.summary)}</p></div>`,
+    sha,
+  );
+}
+
+export interface DayDetailVm {
+  date: string;
+  prevDate: string | null;
+  nextDate: string | null;
+  trio: TrioCell[];
+  accuracyNote: string | null;
+  insights: string[];
+  sectionsHtml: string;
+  latestHtml: string;
+}
+
+export function dayDetailPage(vm: DayDetailVm, sha = ""): string {
+  const nav = `<div class="daynav">${vm.prevDate ? `<a href="/day/${vm.prevDate}">‹ ${vm.prevDate}</a>` : "<span></span>"}<b>${escT(vm.date)}</b>${vm.nextDate ? `<a href="/day/${vm.nextDate}">${vm.nextDate} ›</a>` : "<span></span>"}</div>`;
+  return layout(
+    "today",
+    vm.date,
+    `${nav}
+     <div class="card">${trioHtml(vm.trio)}${vm.accuracyNote ? `<p class="sub" style="text-align:left;margin-top:10px">${escT(vm.accuracyNote)}</p>` : ""}</div>
+     ${vm.insights.length ? `<div class="card"><h2>Key insights</h2>${vm.insights.map((i) => `<p class="sub" style="text-align:left">${escT(i)}</p>`).join("")}</div>` : ""}
+     <div class="card"><h2>Breakdown</h2>${vm.sectionsHtml}</div>
+     <div class="card"><h2>Latest results</h2>${vm.latestHtml}<p class="sub" style="text-align:left">Stress, Energy and Health across recent days — the same three scores, side by side.</p></div>`,
+    sha,
+  );
+}
+
+export interface MeasurementDetailVm {
+  id: number;
+  takenAt: string;
+  trio: TrioCell[];
+  accuracyPct: number | null;
+  insights: string[];
+  sectionsHtml: string;
+  latestHtml: string;
+}
+
+export function measurementDetailPage(vm: MeasurementDetailVm, sha = ""): string {
+  return layout(
+    "measure",
+    "Measurement",
+    `<div class="card"><p class="sub" style="text-align:left">${escT(vm.takenAt)}</p>${trioHtml(vm.trio)}
+     ${vm.accuracyPct === null ? "" : `<div class="stat" style="margin-top:8px"><span>Measurement accuracy</span><b>${Math.round(vm.accuracyPct)}%</b></div>
+     <p class="sub" style="text-align:left">Share of beats kept after artifact filtering — ectopic and noisy intervals are removed before any metric is computed, so 100% means a clean recording throughout.</p>`}</div>
+     ${vm.insights.length ? `<div class="card"><h2>Key insights</h2>${vm.insights.map((i) => `<p class="sub" style="text-align:left">${escT(i)}</p>`).join("")}</div>` : ""}
+     <div class="card"><h2>Breakdown</h2>${vm.sectionsHtml}</div>
+     <div class="card"><h2>Latest results</h2>${vm.latestHtml}<p class="sub" style="text-align:left">Stress, Energy and Health across recent days — the same three scores, side by side.</p></div>`,
+    sha,
+  );
+}
+
+const KIND_DOT: Record<string, string> = {
+  measurement: "#ff2d55",
+  sdnn: "#ff2d55",
+  workout: "#34c759",
+  sleep: "#5856d6",
+  breathing: "#64d2ff",
+  note: "#ffcc00",
+};
+
+export function journalFeedHtml(days: FeedDay[], strip: Array<{ date: string; label: string; battery: number | null }>): string {
+  const stripHtml = strip
+    .map(
+      (d) =>
+        `<a class="calday" href="/day/${d.date}"><span class="cd">${escT(d.label)}</span><span class="orb" style="background:${orbColor(d.battery)}"></span><span class="cd">${d.date.slice(8)}</span></a>`,
+    )
+    .join("");
+  const feed = days
+    .map(
+      (d) =>
+        `<h3 style="margin:16px 2px 4px">${escT(d.label)}${d.battery !== null ? ` <span class="sub">· charge ${Math.round(d.battery)}%</span>` : ""}</h3>` +
+        d.cards
+          .map((c) => {
+            const inner = `<span class="jt"><span class="jtime">${escT(c.timeLabel)}</span><span class="stage-dot" style="background:${KIND_DOT[c.kind] ?? "#8e8e93"}"></span><span class="jtitle">${escT(c.title)}</span><span class="jsrc">${escT(c.source.split(":")[0])}</span></span><div class="jdetail">${escT(c.detail)}</div>`;
+            return c.href
+              ? `<a class="jcard" href="${c.href}">${inner}</a>`
+              : `<div class="jcard">${inner}</div>`;
+          })
+          .join(""),
+    )
+    .join("");
+  return `<div class="card"><h2>Timeline</h2><div class="calstrip">${stripHtml}</div></div>${feed || '<p class="sub">Nothing here yet — measurements, workouts, sleep and notes will appear as they land.</p>'}`;
 }

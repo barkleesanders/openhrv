@@ -19,7 +19,18 @@ import {
   themesPage,
   todayPage,
   welcomePage,
+  activityReportPage,
+  ansBarHtml,
+  dayDetailPage,
+  heartReportPage,
+  journalFeedHtml,
+  measurementDetailPage,
+  reportsHubPage,
+  sectionsHtml,
+  stressImpactPage,
+  type SectionVm,
   type TodayData,
+  type TrioCell,
 } from "./views";
 import { WEBMCP_TOOLS, webmcpDiscovery } from "./webmcp";
 import { APPLE_TOUCH_ICON, FAVICON_ICO } from "./assets";
@@ -35,10 +46,30 @@ import {
   stressState,
   type DayAggregate,
   type FactorImpact,
+  type GaugeDay,
   type MeasurementLike,
 } from "./insights";
 import { healthDays, type HealthDay } from "./healthdays";
-import { impactPage, scoreDetailPage, workoutPage } from "./views";
+import {
+  activityDay,
+  ansBalance,
+  focusFromLfHf,
+  focusProxy,
+  focusState,
+  healthScore,
+  healthState,
+  keyInsights,
+  segmentHeartDay,
+  stateColor,
+  stressImpactDay,
+  trioEnergyState,
+  trioStressState,
+  HEART_STATE_COLORS,
+  HEART_STATE_LABELS,
+  type ActivityDay,
+  type HourBucket,
+} from "./reports";
+import { buildFeed, feedDayLabel, type FeedSources } from "./journalfeed";import { impactPage, scoreDetailPage, workoutPage } from "./views";
 import {
   parseExportXml,
   parseHealthAutoExport,
@@ -54,7 +85,7 @@ import {
   stravaAuthorizeUrl,
   stravaConfigured,
 } from "./strava";
-import { lineChart, stageBar, type ChartPoint } from "./chart";
+import { barChart, lineChart, miniGauge, multiLineChart, segmentChart, stageBar, type ChartPoint, type SegPoint } from "./chart";
 import {
   baselineMedian,
   dailyPoints,
@@ -275,7 +306,7 @@ async function todayData(db: D1Database): Promise<TodayData> {
 // ---------------------------------------------------------------- pages
 app.get("/", async (c) => c.html(todayPage(await todayData(c.env.DB), c.env.GIT_SHA ?? "")));
 app.get("/measure", (c) => c.html(measurePage(c.env.GIT_SHA ?? "")));
-app.get("/journal", (c) => c.html(journalPage(c.env.GIT_SHA ?? "")));
+app.get("/journal", async (c) => c.html(journalPage(c.env.GIT_SHA ?? "", await journalFeedFor(c.env.DB))));
 app.get("/mydata", (c) => c.html(myDataPage(c.env.GIT_SHA ?? "")));
 app.get("/more", (c) => c.html(morePage(c.env.GIT_SHA ?? "")));
 app.get("/battery", async (c) => c.html(scoreDetailPage("battery", c.env.GIT_SHA ?? "", await gaugeChartVm(c.env.DB, "battery", normRange(c.req.query("range"))))));
@@ -1879,3 +1910,799 @@ export default {
     ctx.waitUntil(runScheduled(env));
   },
 };
+
+// ------------------------------------------------------------- Phase 2 core
+interface MeasRow extends MeasurementLike {
+  id: number;
+  sdnn_ms: number;
+  mean_hr_bpm: number;
+}
+
+async function measAsc(db: D1Database): Promise<MeasRow[]> {
+  return (await all(
+    db,
+    "SELECT id, taken_at, rmssd_ms, sdnn_ms, mean_hr_bpm, baevsky_si, lf_hf_ratio, source FROM measurements ORDER BY taken_at ASC LIMIT 1000",
+  )) as unknown as MeasRow[];
+}
+
+const medOf = (xs: number[]): number | null => {
+  if (!xs.length) return null;
+  const s = [...xs].sort((a, b) => a - b);
+  const m = Math.floor(s.length / 2);
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+};
+
+interface DayEnrich {
+  date: string;
+  health: number | null;
+  focus: number | null;
+  focusBasis: "lfhf" | "proxy" | null;
+  ans: ReturnType<typeof ansBalance>;
+  lfHf: number | null;
+  sdnnForHealth: number | null;
+  baselineSdnn: number | null;
+}
+
+interface Bundle {
+  hDays: HealthDay[];
+  gaugeDays: GaugeDay[];
+  asc: MeasRow[];
+  enrich: Map<string, DayEnrich>;
+  sleepMedian: number | null;
+  restingBaseline: number | null;
+}
+
+async function gaugeBundle(db: D1Database): Promise<Bundle> {
+  const asc = await measAsc(db);
+  const hDays = await healthDayInputs(db);
+  const gaugeDays = mergeGaugeDays(measurementGaugeDays(asc), scoreHealthDays(hDays));
+  const sleepVals = hDays.map((d) => d.sleepHours).filter((x): x is number => x !== null);
+  const sleepMedian = sleepVals.length >= 3 ? medOf(sleepVals) : null;
+  const restingBaseline = medOf(hDays.map((d) => d.restingHrBpm).filter((x): x is number => x !== null));
+  const measByDate = new Map<string, MeasRow[]>();
+  for (const m of asc) {
+    const d = String(m.taken_at).slice(0, 10);
+    const arr = measByDate.get(d) ?? [];
+    arr.push(m);
+    measByDate.set(d, arr);
+  }
+  const rhrByDate = new Map(hDays.map((d) => [d.date, d.restingHrBpm]));
+  const priorMeasSdnn: number[] = [];
+  const enrich = new Map<string, DayEnrich>();
+  for (const g of gaugeDays) {
+    const dayMeas = measByDate.get(g.date) ?? [];
+    const lfHfVals = dayMeas.map((m) => Number(m.lf_hf_ratio)).filter((x) => x > 0);
+    const lfHf = lfHfVals.length ? lfHfVals.reduce((a, b) => a + b, 0) / lfHfVals.length : null;
+    const sdnnForHealth =
+      g.source === "health" ? g.hrvMs : dayMeas.length ? dayMeas.reduce((a, m) => a + Number(m.sdnn_ms), 0) / dayMeas.length : null;
+    const baselineSdnn = g.baselineHrvMs ?? (priorMeasSdnn.length ? medOf(priorMeasSdnn) : null);
+    const inp = {
+      sdnnMs: sdnnForHealth,
+      baselineSdnn,
+      restingHrBpm: g.restingHrBpm ?? rhrByDate.get(g.date) ?? null,
+      baselineRhr: restingBaseline,
+      sleepHours: g.sleepHours,
+      sleepMedian,
+      lfHf,
+    };
+    const health = healthScore(inp);
+    const focus = lfHf !== null ? focusFromLfHf(lfHf) : focusProxy(inp);
+    enrich.set(g.date, {
+      date: g.date,
+      health,
+      focus,
+      focusBasis: lfHf !== null ? "lfhf" : focus !== null ? "proxy" : null,
+      ans: ansBalance({ lfHf, sdnnMs: sdnnForHealth, baselineSdnn }),
+      lfHf,
+      sdnnForHealth,
+      baselineSdnn,
+    });
+    if (dayMeas.length) priorMeasSdnn.push(dayMeas.reduce((a, m) => a + Number(m.sdnn_ms), 0) / dayMeas.length);
+  }
+  return { hDays, gaugeDays, asc, enrich, sleepMedian, restingBaseline };
+}
+
+async function hourlyBucketsFor(db: D1Database, date: string): Promise<HourBucket[]> {
+  const rows = (await all(
+    db,
+    "SELECT type, value, start_at, meta_json FROM health_samples WHERE substr(start_at, 1, 10) = ? LIMIT 3000",
+    date,
+  )) as Array<Record<string, unknown>>;
+  const byHour = new Map<number, HourBucket>();
+  const restingByHour = new Map<number, number>();
+  for (const r of rows) {
+    if (rowGranularity(r.meta_json) !== "hourly") continue;
+    const hour = Number(String(r.start_at).slice(11, 13));
+    if (!Number.isFinite(hour)) continue;
+    const b = byHour.get(hour) ?? { hour, hr: null, steps: null, sdnn: null, activeKcal: null };
+    const v = r.value === null ? null : Number(r.value);
+    if (v === null) continue;
+    if (r.type === "heart_rate") b.hr = v;
+    else if (r.type === "resting_heart_rate") restingByHour.set(hour, v);
+    else if (r.type === "hrv_sdnn") b.sdnn = v;
+    else if (r.type === "step_count") b.steps = v;
+    else if (r.type === "active_energy") b.activeKcal = v;
+    byHour.set(hour, b);
+  }
+  for (const [h, v] of restingByHour) {
+    const b = byHour.get(h);
+    if (b && b.hr === null) b.hr = v;
+  }
+  return [...byHour.values()].sort((a, b) => a.hour - b.hour);
+}
+
+async function dailyEnergyFor(db: D1Database, date: string): Promise<{ active: number | null; basal: number | null }> {
+  const rows = (await all(
+    db,
+    "SELECT type, value, meta_json FROM health_samples WHERE substr(start_at, 1, 10) = ? AND type IN ('active_energy', 'basal_energy') LIMIT 500",
+    date,
+  )) as Array<Record<string, unknown>>;
+  let active = 0;
+  let basal = 0;
+  let hasA = false;
+  let hasB = false;
+  for (const r of rows) {
+    if (rowGranularity(r.meta_json) === "hourly") continue;
+    const v = r.value === null ? 0 : Number(r.value);
+    if (r.type === "active_energy") { active += v; hasA = true; } else { basal += v; hasB = true; }
+  }
+  return { active: hasA ? Math.round(active) : null, basal: hasB ? Math.round(basal) : null };
+}
+
+interface SleepRowFull { start_at: string; end_at: string; duration_s: number }
+
+async function sleepRows(db: D1Database): Promise<SleepRowFull[]> {
+  return (await all(db, "SELECT start_at, end_at, duration_s FROM sleep ORDER BY end_at DESC LIMIT 500")) as unknown as SleepRowFull[];
+}
+
+/** Hour-float windows of sleep that fall inside `date` (a night ending
+ *  that morning contributes [0, endHour]; one starting that evening
+ *  contributes [startHour, 24]). */
+function sleepWindowsOn(rows: SleepRowFull[], date: string): Array<[number, number]> {
+  const out: Array<[number, number]> = [];
+  for (const r of rows) {
+    const sd = String(r.start_at).slice(0, 10);
+    const ed = String(r.end_at).slice(0, 10);
+    if (ed < date || sd > date) continue;
+    const sh = Number(String(r.start_at).slice(11, 13)) + Number(String(r.start_at).slice(14, 16)) / 60;
+    const eh = Number(String(r.end_at).slice(11, 13)) + Number(String(r.end_at).slice(14, 16)) / 60;
+    const from = sd === date ? sh : 0;
+    const to = ed === date ? eh : 24;
+    if (to > from) out.push([from, to]);
+  }
+  return out;
+}
+
+interface WorkoutLite {
+  id: number;
+  start_at: string;
+  name: string;
+  durationMin: number;
+  distanceM: number | null;
+  source: string;
+  activityExternalId: string | null;
+}
+
+function parseWorkoutRow(row: Record<string, unknown>): WorkoutLite {
+  let meta: Record<string, unknown> = {};
+  try {
+    meta = JSON.parse(String(row.meta_json ?? "{}")) as Record<string, unknown>;
+  } catch {
+    meta = {};
+  }
+  const num = (v: unknown): number | null => {
+    const n = Number(v);
+    return v !== undefined && v !== null && Number.isFinite(n) ? n : null;
+  };
+  const durationS = num(meta.moving_time_s) ?? num(meta.elapsed_time_s) ?? (num(row.value) !== null ? Number(row.value) * 60 : 0);
+  return {
+    id: Number(row.id),
+    start_at: String(row.start_at),
+    name: String(meta.name ?? meta.sport_type ?? meta.type ?? "Workout"),
+    durationMin: (durationS ?? 0) / 60,
+    distanceM: num(meta.distance_m) ?? num(meta.distance),
+    source: String(row.source ?? ""),
+    activityExternalId: typeof meta.activity_id === "string" ? meta.activity_id : typeof meta.external_id === "string" ? meta.external_id : null,
+  };
+}
+
+async function workoutsOn(db: D1Database, date: string): Promise<WorkoutLite[]> {
+  const rows = (await all(
+    db,
+    "SELECT id, start_at, value, source, meta_json FROM health_samples WHERE type = 'workout' AND substr(start_at, 1, 10) = ? LIMIT 50",
+    date,
+  )) as Array<Record<string, unknown>>;
+  return rows.map(parseWorkoutRow);
+}
+
+const deltaVsPrev = (series: Array<number | null>, idx: number): number | null => {
+  const cur = series[idx];
+  if (cur === null || cur === undefined) return null;
+  const prev = series.slice(Math.max(0, idx - 14), idx).filter((x): x is number => x !== null);
+  if (prev.length < 3) return null;
+  const mean = prev.reduce((a, b) => a + b, 0) / prev.length;
+  if (!mean) return null;
+  return ((cur - mean) / mean) * 100;
+};
+
+/** The six expandable breakdown sections shared by day + measurement
+ *  detail. `meas` overrides the score values with one RR measurement's. */
+function sectionsFor(bundle: Bundle, date: string, meas?: { stress: number; battery: number; rmssd: number; sdnn: number; lfHf: number }): SectionVm[] {
+  const { gaugeDays, enrich } = bundle;
+  const idx = gaugeDays.findIndex((g) => g.date === date);
+  const g = idx >= 0 ? gaugeDays[idx] : null;
+  const e = enrich.get(date);
+  const last30 = gaugeDays.slice(-30);
+  const healthSeries = last30.map((d) => enrich.get(d.date)?.health ?? null);
+  const focusSeries = last30.map((d) => enrich.get(d.date)?.focus ?? null);
+  const sections: SectionVm[] = [];
+  const lineFor = (id: string, vals: Array<number | null>, unit: string, color: string, yLabel: string): string => {
+    const pts: ChartPoint[] = [];
+    last30.forEach((d, i) => {
+      const v = vals[i];
+      if (v !== null) pts.push({ v: Math.round(v), label: d.date.slice(5), full: `${d.date} · ${Math.round(v)}${unit ? " " + unit : ""}` });
+    });
+    return pts.length > 1 ? lineChart({ id, points: pts, unit, color, yLabel }) : '<p class="sub">Not enough days yet for a trend.</p>';
+  };
+  const hIdx = last30.findIndex((d) => d.date === date);
+  if (e?.health !== null && e?.health !== undefined) {
+    sections.push({
+      name: "Health",
+      value: `${Math.round(e.health)}%`,
+      state: healthState(e.health),
+      stateColor: stateColor(healthState(e.health)),
+      deltaPct: deltaVsPrev(healthSeries, hIdx),
+      text: `Health blends your HRV level against your own baseline (half the weight), resting heart rate, and how last night's sleep compared with your usual — a slow-moving picture of how the core systems are holding up, not a grade for one day.`,
+      chartHtml: lineFor("sec-health", healthSeries, "%", "#0a84ff", "Health (%)"),
+    });
+  }
+  if (e?.focus !== null && e?.focus !== undefined) {
+    sections.push({
+      name: "Focus",
+      value: `${Math.round(e.focus)}%`,
+      state: focusState(e.focus),
+      stateColor: stateColor(focusState(e.focus)),
+      deltaPct: deltaVsPrev(focusSeries, hIdx),
+      text:
+        e.focusBasis === "lfhf"
+          ? "Focus here comes from the real LF/HF spectrum of your RR recording: it peaks when the two branches of the nervous system sit near balance, and falls when one dominates — wired or drowsy both read low."
+          : "Focus here is an estimate: no spectrum exists for aggregate days, so it is inferred from your HRV level against baseline, taxed by a resting heart rate running hot. Days with a real RR measurement compute it from LF/HF directly.",
+      chartHtml: lineFor("sec-focus", focusSeries, "%", "#af52de", "Focus (%)"),
+    });
+  }
+  const battery = meas ? meas.battery : g?.battery;
+  if (battery !== undefined && battery !== null) {
+    sections.push({
+      name: "Energy",
+      value: `${Math.round(battery)}%`,
+      state: batteryState(battery),
+      stateColor: stateColor(trioEnergyState(battery)),
+      deltaPct: g ? deltaVsPrev(gaugeDays.map((d) => d.battery), gaugeDays.indexOf(g)) : null,
+      text: "Energy is your morning charge: variability against your personal baseline, adjusted for sleep. It answers 'how much do I have to spend today?' — high numbers forgive a hard day, low numbers ask for an easier one.",
+      chartHtml: lineFor("sec-energy", last30.map((d) => d.battery), "%", "#34c759", "Energy (%)"),
+    });
+  }
+  const stress = meas ? meas.stress : g?.stress;
+  if (stress !== undefined && stress !== null) {
+    sections.push({
+      name: "Stress",
+      value: `${Math.round(stress)}%`,
+      state: stressState(stress),
+      stateColor: stateColor(trioStressState(stress)),
+      deltaPct: g ? deltaVsPrev(gaugeDays.map((d) => d.stress), gaugeDays.indexOf(g)) : null,
+      invert: true,
+      text: "Stress reflects how far the day's variability was squeezed and how hard the heart idled, against sleep debt. Occasional high days are normal training for the system; a week of them is the pattern worth acting on.",
+      chartHtml: lineFor("sec-stress", last30.map((d) => d.stress), "%", "#ff453a", "Stress (%)"),
+    });
+  }
+  const ans = meas
+    ? ansBalance({ lfHf: meas.lfHf > 0 ? meas.lfHf : null, sdnnMs: null, baselineSdnn: null })
+    : e?.ans;
+  if (ans) {
+    sections.push({
+      name: "Nervous system balance",
+      value: `${ans.paraPct}%`,
+      state: ans.paraPct >= ans.symPct ? "Rest-and-digest leaning" : "Fight-or-flight leaning",
+      stateColor: ans.paraPct >= ans.symPct ? "#0a84ff" : "#ff453a",
+      deltaPct: null,
+      text:
+        ans.basis === "lfhf"
+          ? "Computed from the LF/HF spectrum of the RR recording: the split shows which branch of the autonomic nervous system held the wheel. Neither side is 'good' — training, focus and digestion each want a different balance."
+          : "Estimated from your HRV level against baseline (higher variability reads as more rest-and-digest). Days with a real RR measurement compute this from the LF/HF spectrum instead — this day is the labeled estimate.",
+      chartHtml: ansBarHtml(ans.symPct, ans.paraPct, ans.basis === "lfhf" ? "From this recording's LF/HF spectrum." : "Estimate from HRV level (SDNN proxy)."),
+    });
+  }
+  const hrvVal = meas ? meas.rmssd : g?.hrvMs;
+  if (hrvVal !== undefined && hrvVal !== null && g) {
+    const base = e?.baselineSdnn;
+    sections.push({
+      name: "HRV Score",
+      value: `${Math.round(hrvVal)} ms`,
+      state: meas ? "RMSSD" : g.hrvKind === "sdnn" ? "SDNN" : "RMSSD",
+      stateColor: "#ff2d55",
+      deltaPct: base ? ((hrvVal - base) / base) * 100 : null,
+      text: `The raw variability number under every score on this page. ${meas ? "RMSSD from the RR recording" : g.hrvKind === "sdnn" ? "SDNN from the day's Health aggregates" : "RMSSD"} ${base ? `against a personal baseline of ${Math.round(base)} ms` : "with no baseline yet"} — the delta chip compares against that baseline, which is the only comparison that means anything for HRV.`,
+      chartHtml: lineFor("sec-hrv", last30.map((d) => d.hrvMs), "ms", "#ff2d55", `HRV (${g.hrvKind.toUpperCase()}, ms)`),
+    });
+  }
+  return sections;
+}
+
+function latestResultsHtml(bundle: Bundle): string {
+  const days = bundle.gaugeDays.filter((g) => bundle.enrich.get(g.date)?.health !== null).slice(-14);
+  if (days.length < 2) return '<p class="sub">Latest results appear once a few scored days exist.</p>';
+  const pt = (g: GaugeDay, v: number): ChartPoint => ({ v: Math.round(v), label: g.date.slice(5), full: g.date });
+  return multiLineChart({
+    id: "latest-results",
+    unit: "%",
+    yLabel: "Score (%)",
+    series: [
+      { label: "Stress", color: "#ff453a", points: days.map((g) => pt(g, g.stress)) },
+      { label: "Energy", color: "#34c759", points: days.map((g) => pt(g, g.battery)) },
+      { label: "Health", color: "#0a84ff", points: days.map((g) => pt(g, bundle.enrich.get(g.date)?.health ?? 0)) },
+    ],
+  });
+}
+
+// ------------------------------------------------------- Phase 2: journal
+async function journalFeedFor(db: D1Database): Promise<string> {
+  const bundle = await gaugeBundle(db);
+  const scored = scoreSeries(bundle.asc as unknown as MeasurementLike[]);
+  const idByTakenAt = new Map(bundle.asc.map((m) => [String(m.taken_at), m.id]));
+  const trios = scored.slice(-40).map((p) => {
+    const date = String(p.at).slice(0, 10);
+    const m = bundle.asc.find((x) => String(x.taken_at) === String(p.at));
+    return {
+      id: idByTakenAt.get(String(p.at)) ?? 0,
+      taken_at: String(p.at),
+      stress: p.stress,
+      battery: p.battery,
+      health: bundle.enrich.get(date)?.health ?? null,
+      source: m?.source ?? "measurement",
+    };
+  }).filter((t) => t.id > 0);
+  const workoutRows = (await all(
+    db,
+    "SELECT id, start_at, value, source, meta_json FROM health_samples WHERE type = 'workout' ORDER BY start_at DESC LIMIT 60",
+  )) as Array<Record<string, unknown>>;
+  const sleeps = await sleepRows(db);
+  const breathing = (await all(db, "SELECT taken_at, duration_s FROM breathing_sessions ORDER BY taken_at DESC LIMIT 100")) as unknown as Array<{ taken_at: string; duration_s: number }>;
+  const notes = (await all(db, "SELECT created_at, body, mood, tags_json FROM journal ORDER BY created_at DESC LIMIT 100")) as unknown as Array<{ created_at: string; body: string; mood: number; tags_json: string }>;
+  const src: FeedSources = {
+    trios,
+    sdnn: bundle.hDays
+      .filter((d) => d.sdnnMs !== null)
+      .slice(-30)
+      .map((d) => ({ date: d.date, at: d.date, sdnnMs: d.sdnnMs as number, restingHrBpm: d.restingHrBpm, source: d.sdnnSource ?? "Apple Health" })),
+    workouts: workoutRows.map((r) => {
+      const w = parseWorkoutRow(r);
+      return { id: w.id, start_at: w.start_at, name: w.name, durationMin: w.durationMin, distanceM: w.distanceM, source: w.source };
+    }),
+    sleeps: sleeps.slice(0, 30).map((s) => ({
+      date: String(s.end_at).slice(0, 10),
+      start_at: String(s.start_at),
+      end_at: String(s.end_at),
+      hours: Number(s.duration_s) / 3600,
+      source: "Apple Health",
+    })),
+    breathing: breathing.map((b) => ({ taken_at: String(b.taken_at), durationMin: Number(b.duration_s) / 60 })),
+    notes: notes.map((n) => {
+      let tags: string[] = [];
+      try {
+        const t = JSON.parse(String(n.tags_json ?? "[]")) as unknown;
+        if (Array.isArray(t)) tags = t.map(String);
+      } catch {
+        tags = [];
+      }
+      return { created_at: String(n.created_at), body: String(n.body), mood: n.mood === null ? null : Number(n.mood), tags };
+    }),
+    dayBattery: bundle.gaugeDays.map((g) => ({ date: g.date, battery: g.battery })),
+  };
+  const days = buildFeed(src, 14);
+  const WD = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
+  const stripDays = bundle.gaugeDays.slice(-14);
+  const strip = stripDays.map((g) => ({
+    date: g.date,
+    label: WD[new Date(`${g.date}T12:00:00Z`).getUTCDay()],
+    battery: g.battery as number | null,
+  }));
+  return journalFeedHtml(days, strip);
+}
+
+// ------------------------------------------------------- Phase 2: reports
+const STRESS_EXPLAINER =
+  "Most stress tools only ask how squeezed your variability looks. This report asks a sharper question: when was your heart working hard while your body was doing nothing? An hour counts when its average heart rate runs at least 20% above your resting baseline while you take fewer than 50 steps — sitting in traffic, at a desk, in an argument. Those hours add up as stress minutes. The morning level reads the first waking hours the same way: a heart that starts the day revved is carrying yesterday with it. Breaking stationary stress up is unglamorous and effective — stand, walk, get light — the next hour's number is the receipt.";
+
+function stressColor(v: number): string {
+  return v < 25 ? "#34c759" : v < 50 ? "#ffcc00" : v < 75 ? "#ff9f0a" : "#ff453a";
+}
+
+const shortDate = (date: string): string => {
+  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  return `${months[Number(date.slice(5, 7)) - 1]} ${Number(date.slice(8, 10))}`;
+};
+
+app.get("/reports", (c) => c.html(reportsHubPage(c.env.GIT_SHA ?? "")));
+
+app.get("/reports/stress", async (c) => {
+  const db = c.env.DB;
+  const bundle = await gaugeBundle(db);
+  const range = ["latest", "days", "weeks", "months"].includes(c.req.query("range") ?? "") ? (c.req.query("range") as string) : "latest";
+  const days = bundle.gaugeDays;
+  if (!days.length) {
+    return c.html(stressImpactPage({ range, stripHtml: '<p class="sub">No scored days yet.</p>', selTitle: "No data", stressLevel: null, morning: null, stressMinutes: null, basisNote: "", explainer: STRESS_EXPLAINER }, c.env.GIT_SHA ?? ""));
+  }
+  let stripHtml = "";
+  let selDate = c.req.query("date") ?? days[days.length - 1].date;
+  if (range === "latest" || range === "days") {
+    const win = days.slice(range === "latest" ? -7 : -14);
+    if (!win.some((d) => d.date === selDate)) selDate = win[win.length - 1].date;
+    stripHtml = win
+      .map(
+        (d) =>
+          `<a class="gday${d.date === selDate ? " sel" : ""}" href="/reports/stress?range=${range}&date=${d.date}">${miniGauge(d.stress, stressColor(d.stress))}<div class="gv">${Math.round(d.stress)}%</div><div class="gd">${shortDate(d.date)}</div></a>`,
+      )
+      .join("");
+  } else {
+    // Weeks / months: one glyph per period, mean stress, linking to the
+    // period's last day detail.
+    const keyOf = (date: string): string => (range === "weeks" ? date.slice(0, 10) : date.slice(0, 7));
+    const periods = new Map<string, GaugeDay[]>();
+    for (const d of days.slice(range === "weeks" ? -56 : -186)) {
+      let key = keyOf(d.date);
+      if (range === "weeks") {
+        const dt = new Date(`${d.date}T12:00:00Z`);
+        const monday = new Date(dt.getTime() - ((dt.getUTCDay() + 6) % 7) * 86400000);
+        key = monday.toISOString().slice(0, 10);
+      }
+      const arr = periods.get(key) ?? [];
+      arr.push(d);
+      periods.set(key, arr);
+    }
+    const entries = [...periods.entries()].slice(range === "weeks" ? -8 : -6);
+    stripHtml = entries
+      .map(([key, arr]) => {
+        const mean = arr.reduce((a, d) => a + d.stress, 0) / arr.length;
+        const last = arr[arr.length - 1];
+        return `<a class="gday" href="/day/${last.date}">${miniGauge(mean, stressColor(mean))}<div class="gv">${Math.round(mean)}%</div><div class="gd">${range === "weeks" ? `w/o ${shortDate(key)}` : key}</div></a>`;
+      })
+      .join("");
+    selDate = days[days.length - 1].date;
+  }
+  const g = days.find((d) => d.date === selDate) ?? days[days.length - 1];
+  const buckets = await hourlyBucketsFor(db, g.date);
+  const impact = stressImpactDay(buckets, bundle.restingBaseline);
+  const basisNote =
+    impact.stressMinutes === null
+      ? `Stress level for ${g.date} comes from the day's Health aggregates. Stress minutes and morning level need hourly buckets, which haven't reached this day — they show as unavailable rather than estimated.`
+      : `From ${impact.hoursWithData} hours of hourly data: ${impact.elevatedHours} elevated hour${impact.elevatedHours === 1 ? "" : "s"}, ${impact.stationaryStressHours} of them stationary. Minutes are counted at hourly resolution — an elevated stationary hour counts in full.`;
+  return c.html(
+    stressImpactPage(
+      {
+        range,
+        stripHtml,
+        selTitle: feedDayLabel(g.date),
+        stressLevel: g.stress,
+        morning: impact.morningLevelPct,
+        stressMinutes: impact.stressMinutes,
+        basisNote,
+        explainer: STRESS_EXPLAINER,
+      },
+      c.env.GIT_SHA ?? "",
+    ),
+  );
+});
+
+app.get("/reports/activity", async (c) => {
+  const db = c.env.DB;
+  const bundle = await gaugeBundle(db);
+  const range = ["latest", "days", "weeks", "months"].includes(c.req.query("range") ?? "") ? (c.req.query("range") as string) : "latest";
+  const hByDate = new Map(bundle.hDays.map((d) => [d.date, d]));
+  const allDates = [...new Set([...bundle.hDays.map((d) => d.date), ...bundle.gaugeDays.map((g) => g.date)])].sort();
+  const latestDate = allDates[allDates.length - 1];
+  const winDays = range === "latest" ? 1 : range === "days" ? 7 : range === "weeks" ? 28 : 90;
+  const windowDates = allDates.slice(-winDays);
+  const maxRow = (await first(db, "SELECT MAX(value) AS m FROM health_samples WHERE type = 'heart_rate' AND value IS NOT NULL")) as Record<string, unknown> | null;
+  const maxHrObserved = maxRow && maxRow.m !== null ? Number(maxRow.m) : null;
+  const sleeps = await sleepRows(db);
+  const perDay: ActivityDay[] = [];
+  for (const date of windowDates) {
+    const buckets = await hourlyBucketsFor(db, date);
+    const energy = await dailyEnergyFor(db, date);
+    const wos = await workoutsOn(db, date);
+    const sleepSet = new Set<number>();
+    for (const [a, b] of sleepWindowsOn(sleeps, date)) for (let h = Math.floor(a); h < Math.ceil(b); h++) sleepSet.add(h);
+    perDay.push(
+      activityDay({
+        buckets,
+        stepsDaily: hByDate.get(date)?.steps ?? null,
+        activeKcalDaily: energy.active,
+        basalKcalDaily: energy.basal,
+        workoutMinutes: wos.reduce((a, w) => a + w.durationMin, 0),
+        restingBaseline: bundle.restingBaseline,
+        maxHrObserved,
+        sleepHoursSet: sleepSet,
+      }),
+    );
+  }
+  const avg = (pick: (a: (typeof perDay)[number]) => number | null): number | null => {
+    const vals = perDay.map(pick).filter((x): x is number => x !== null);
+    return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
+  };
+  const sumAsAvg = range !== "latest";
+  const fmtDur = (mins: number | null): string => (mins === null ? "—" : mins >= 60 ? `${Math.floor(mins / 60)} h ${Math.round(mins % 60)} m` : `${Math.round(mins)} m`);
+  const stats = [
+    { name: "Active time", value: fmtDur(avg((a) => a.activeMinutes)) },
+    { name: "Active METs", value: avg((a) => a.activeMets) === null ? "—" : `${Math.round(avg((a) => a.activeMets) as number)} MET·m` },
+    { name: "Active cal", value: avg((a) => a.activeCal) === null ? "—" : `${Math.round(avg((a) => a.activeCal) as number)} kcal` },
+    { name: "Sedentary", value: fmtDur(avg((a) => a.sedentaryMinutes)) },
+    { name: "Steps", value: avg((a) => a.steps) === null ? "—" : Math.round(avg((a) => a.steps) as number).toLocaleString("en-US") },
+    { name: "Total cal", value: avg((a) => a.totalCal) === null ? "—" : `${Math.round(avg((a) => a.totalCal) as number)} kcal` },
+    { name: "Intense time", value: fmtDur(avg((a) => a.intenseMinutes)) },
+    { name: "Intense METs", value: avg((a) => a.intenseMets) === null ? "—" : `${Math.round(avg((a) => a.intenseMets) as number)} MET·m` },
+    { name: "Stand hours", value: avg((a) => a.standHours) === null ? "—" : `${Math.round(avg((a) => a.standHours) as number)} h` },
+  ];
+  const stepDays = bundle.hDays.filter((d) => d.steps !== null).slice(-30);
+  const barsHtml = stepDays.length
+    ? barChart({
+        id: "activity-steps",
+        unit: "steps",
+        color: "#34c759",
+        yLabel: "Steps",
+        points: stepDays.map((d) => ({ v: d.steps as number, label: d.date.slice(5), full: `${d.date} · ${(d.steps as number).toLocaleString("en-US")} steps` })),
+      })
+    : '<p class="sub">No step data yet.</p>';
+  const stepVals = stepDays.map((d) => d.steps as number);
+  const caption = stepVals.length
+    ? `Avg ${Math.round(stepVals.reduce((a, b) => a + b, 0) / stepVals.length).toLocaleString("en-US")} steps/day over ${stepVals.length} days · best ${Math.max(...stepVals).toLocaleString("en-US")}`
+    : "";
+  return c.html(
+    activityReportPage(
+      {
+        range,
+        title: sumAsAvg ? `Daily average · last ${perDay.length} days` : (latestDate ? feedDayLabel(latestDate) : "No data"),
+        stats,
+        barsHtml,
+        caption,
+        note: "Stand hour = an hour with at least 100 steps. Intense = workout minutes, or hours with heart rate in the top quarter of your heart-rate reserve. METs are estimated from heart-rate reserve (1 MET at rest scaling toward 10 at your observed max HR) — an estimate, labeled as such. Sedentary counts waking hours (06:00–22:00, outside sleep) under 100 steps, at hourly resolution.",
+      },
+      c.env.GIT_SHA ?? "",
+    ),
+  );
+});
+
+app.get("/reports/heart", async (c) => {
+  const db = c.env.DB;
+  const dates = (await all(db, "SELECT DISTINCT substr(start_at, 1, 10) AS d FROM health_samples WHERE type = 'heart_rate' ORDER BY d DESC LIMIT 120")) as unknown as Array<{ d: string }>;
+  const hrDates = dates.map((r) => String(r.d)).filter((d) => {
+    return true;
+  });
+  // Only dates that actually carry hourly heart_rate rows qualify.
+  const qualified: string[] = [];
+  for (const d of hrDates) {
+    const buckets = await hourlyBucketsFor(db, d);
+    if (buckets.some((b) => b.hr !== null)) qualified.push(d);
+    if (qualified.length >= 60 && c.req.query("date")) break;
+  }
+  const date = c.req.query("date") && qualified.includes(c.req.query("date") as string) ? (c.req.query("date") as string) : qualified[0];
+  if (!date) {
+    return c.html(heartReportPage({ date: "—", prevDate: null, nextDate: null, chartHtml: '<p class="sub">No hourly heart-rate data yet — the hourly sync brings it in.</p>', summary: "", peakText: "—" }, c.env.GIT_SHA ?? ""));
+  }
+  const idx = qualified.indexOf(date);
+  const buckets = await hourlyBucketsFor(db, date);
+  const sleeps = await sleepRows(db);
+  const wos = await workoutsOn(db, date);
+  const breathing = (await all(db, "SELECT taken_at FROM breathing_sessions WHERE substr(taken_at, 1, 10) = ?", date)) as unknown as Array<{ taken_at: string }>;
+  const windows = {
+    sleep: sleepWindowsOn(sleeps, date),
+    workouts: wos.map((w) => {
+      const sh = Number(w.start_at.slice(11, 13)) + Number(w.start_at.slice(14, 16)) / 60;
+      return [sh, sh + w.durationMin / 60] as [number, number];
+    }),
+    breathingHours: new Set(breathing.map((b) => Number(String(b.taken_at).slice(11, 13)))),
+  };
+  // Strava streams refine the workout hours: hourly values inside a
+  // streamed workout are replaced by the stream's per-hour mean, and the
+  // peak considers the stream's true max.
+  let streamNote = "";
+  let streamPeak: { hr: number; hour: number } | null = null;
+  for (const w of wos) {
+    const streamRow = await first(db, "SELECT points_json FROM workout_streams WHERE sample_id = ?", w.id);
+    if (!streamRow) continue;
+    try {
+      const pairs = JSON.parse(String(streamRow.points_json)) as Array<[number, number]>;
+      if (!Array.isArray(pairs) || !pairs.length) continue;
+      streamNote = " Workout hours use your Strava stream (recorded every few seconds), averaged per hour; the peak is the stream's true maximum.";
+      const startH = Number(w.start_at.slice(11, 13)) + Number(w.start_at.slice(14, 16)) / 60;
+      for (const b of buckets) {
+        const inW = b.hour >= Math.floor(startH) && b.hour < startH + w.durationMin / 60;
+        if (!inW) continue;
+        const sel = pairs.filter(([t]) => startH + t / 3600 >= b.hour && startH + t / 3600 < b.hour + 1);
+        if (sel.length) b.hr = Math.round(sel.reduce((a, p) => a + p[1], 0) / sel.length);
+      }
+      for (const [t, hr] of pairs) {
+        if (!streamPeak || hr > streamPeak.hr) streamPeak = { hr, hour: startH + t / 3600 };
+      }
+    } catch {
+      /* stream unreadable — hourly values stand */
+    }
+  }
+  const { points, peak } = segmentHeartDay(buckets, windows);
+  const truePeak = streamPeak && (!peak || streamPeak.hr > peak.hr) ? streamPeak : peak;
+  const segPoints: SegPoint[] = points.map((p) => ({
+    v: p.hr,
+    label: `${String(p.hour).padStart(2, "0")}:00`,
+    full: `${date} ${String(p.hour).padStart(2, "0")}:00 · ${p.hr} bpm · ${HEART_STATE_LABELS[p.state]}`,
+    seg: p.state,
+  }));
+  const stateHours = new Map<string, number>();
+  for (const p of points) stateHours.set(p.state, (stateHours.get(p.state) ?? 0) + 1);
+  const dominant = [...stateHours.entries()].sort((a, b) => b[1] - a[1])[0];
+  const avgHr = points.length ? Math.round(points.reduce((a, p) => a + p.hr, 0) / points.length) : null;
+  const summary =
+    (points.length
+      ? `Across ${points.length} measured hours the day averaged ${avgHr} bpm, spending the most time in ${HEART_STATE_LABELS[dominant[0] as keyof typeof HEART_STATE_LABELS]} (${dominant[1]} h)${wos.length ? `, with ${wos.length} workout${wos.length === 1 ? "" : "s"} on the books` : ""}.`
+      : "No hourly heart rate for this day.") + streamNote;
+  return c.html(
+    heartReportPage(
+      {
+        date,
+        prevDate: idx < qualified.length - 1 ? qualified[idx + 1] : null,
+        nextDate: idx > 0 ? qualified[idx - 1] : null,
+        chartHtml: segmentChart({ id: "heart-day", points: segPoints, unit: "bpm", yLabel: "Heart rate (bpm)", segColors: HEART_STATE_COLORS, segLabels: HEART_STATE_LABELS }),
+        summary,
+        peakText: truePeak ? `${Math.round(truePeak.hr)} bpm · ${String(Math.floor(truePeak.hour)).padStart(2, "0")}:${String(Math.round((truePeak.hour % 1) * 60)).padStart(2, "0")}` : "—",
+      },
+      c.env.GIT_SHA ?? "",
+    ),
+  );
+});
+
+// ------------------------------------------------- Phase 2: detail pages
+app.get("/day/:date", async (c) => {
+  const db = c.env.DB;
+  const date = c.req.param("date");
+  const bundle = await gaugeBundle(db);
+  const idx = bundle.gaugeDays.findIndex((g) => g.date === date);
+  const g = idx >= 0 ? bundle.gaugeDays[idx] : null;
+  const prevDate = idx > 0 ? bundle.gaugeDays[idx - 1].date : null;
+  const nextDate = idx >= 0 && idx < bundle.gaugeDays.length - 1 ? bundle.gaugeDays[idx + 1].date : null;
+  if (!g) {
+    return c.html(
+      dayDetailPage(
+        {
+          date,
+          prevDate: bundle.gaugeDays[bundle.gaugeDays.length - 1]?.date ?? null,
+          nextDate: null,
+          trio: [
+            { name: "Stress", value: null, state: "", color: "#3a3a3c" },
+            { name: "Energy", value: null, state: "", color: "#3a3a3c" },
+            { name: "Health", value: null, state: "", color: "#3a3a3c" },
+          ],
+          accuracyNote: null,
+          insights: [],
+          sectionsHtml: '<p class="sub">No scores recorded for this day yet — it fills in when a measurement or a Health import lands.</p>',
+          latestHtml: latestResultsHtml(bundle),
+        },
+        c.env.GIT_SHA ?? "",
+      ),
+    );
+  }
+  const e = bundle.enrich.get(date);
+  const dayMeas = bundle.asc.filter((m) => String(m.taken_at).slice(0, 10) === date);
+  let accuracyNote: string;
+  if (dayMeas.length) {
+    const latestMeas = dayMeas[dayMeas.length - 1];
+    const rrRow = await first(db, "SELECT rr_ms_json FROM rr_series WHERE measurement_id = ?", latestMeas.id);
+    let acc: number | null = null;
+    if (rrRow) {
+      try {
+        const rr = JSON.parse(String(rrRow.rr_ms_json)) as number[];
+        const res = computeHrv(rr);
+        acc = res.count + res.artifactsRemoved > 0 ? Math.round((res.count / (res.count + res.artifactsRemoved)) * 100) : null;
+      } catch {
+        acc = null;
+      }
+    }
+    accuracyNote = acc !== null ? `This day includes a real RR measurement — measurement accuracy ${acc}% (share of beats kept after artifact filtering).` : "This day includes a real RR measurement.";
+  } else {
+    accuracyNote = "Scores for this day are computed from daily Health aggregates (SDNN) — no raw RR recording exists for it, so Focus and the nervous-system balance are labeled estimates where they appear.";
+  }
+  const buckets = await hourlyBucketsFor(db, date);
+  const impact = stressImpactDay(buckets, bundle.restingBaseline);
+  const insights = keyInsights({
+    stress: g.stress,
+    battery: g.battery,
+    health: e?.health ?? null,
+    sdnnMs: g.source === "health" ? g.hrvMs : null,
+    baselineSdnn: e?.baselineSdnn ?? null,
+    restingHrBpm: g.restingHrBpm,
+    baselineRhr: bundle.restingBaseline,
+    sleepHours: g.sleepHours,
+    stressMinutes: impact.stressMinutes,
+  });
+  return c.html(
+    dayDetailPage(
+      {
+        date,
+        prevDate,
+        nextDate,
+        trio: [
+          { name: "Stress", value: g.stress, state: trioStressState(g.stress), color: stateColor(trioStressState(g.stress)) },
+          { name: "Energy", value: g.battery, state: trioEnergyState(g.battery), color: stateColor(trioEnergyState(g.battery)) },
+          { name: "Health", value: e?.health ?? null, state: e ? healthState(e.health ?? 0) : "", color: e?.health != null ? stateColor(healthState(e.health)) : "#3a3a3c" },
+        ],
+        accuracyNote,
+        insights,
+        sectionsHtml: sectionsHtml(sectionsFor(bundle, date)),
+        latestHtml: latestResultsHtml(bundle),
+      },
+      c.env.GIT_SHA ?? "",
+    ),
+  );
+});
+
+app.get("/measurement/:id", async (c) => {
+  const db = c.env.DB;
+  const id = Number(c.req.param("id"));
+  const row = (await first(db, "SELECT * FROM measurements WHERE id = ?", id)) as Record<string, unknown> | null;
+  if (!row) {
+    return c.html(layout("", "Not found", `<div class="card"><h2>Measurement not found</h2><p><a href="/journal"><button>Back to Journal</button></a></p></div>`, c.env.GIT_SHA ?? ""), 404);
+  }
+  const bundle = await gaugeBundle(db);
+  const takenAt = String(row.taken_at);
+  const date = takenAt.slice(0, 10);
+  const scored = scoreSeries(bundle.asc as unknown as MeasurementLike[]);
+  const point = scored.find((p) => String(p.at) === takenAt) ?? scored[scored.length - 1];
+  const rrRow = await first(db, "SELECT rr_ms_json FROM rr_series WHERE measurement_id = ?", id);
+  let accuracyPct: number | null = null;
+  if (rrRow) {
+    try {
+      const rr = JSON.parse(String(rrRow.rr_ms_json)) as number[];
+      const res = computeHrv(rr);
+      accuracyPct = res.count + res.artifactsRemoved > 0 ? (res.count / (res.count + res.artifactsRemoved)) * 100 : null;
+    } catch {
+      accuracyPct = null;
+    }
+  }
+  const e = bundle.enrich.get(date);
+  const priorSdnn = bundle.asc.filter((m) => String(m.taken_at) < takenAt).map((m) => Number(m.sdnn_ms));
+  const hDay = bundle.hDays.find((d) => d.date === date);
+  const insights = keyInsights({
+    stress: point?.stress ?? null,
+    battery: point?.battery ?? null,
+    health: e?.health ?? null,
+    sdnnMs: Number(row.sdnn_ms),
+    baselineSdnn: medOf(priorSdnn),
+    restingHrBpm: null,
+    baselineRhr: null,
+    sleepHours: hDay?.sleepHours ?? null,
+    stressMinutes: null,
+  });
+  return c.html(
+    measurementDetailPage(
+      {
+        id,
+        takenAt: takenAt.replace("T", " ").slice(0, 16),
+        trio: [
+          { name: "Stress", value: point?.stress ?? null, state: point ? trioStressState(point.stress) : "", color: point ? stateColor(trioStressState(point.stress)) : "#3a3a3c" },
+          { name: "Energy", value: point?.battery ?? null, state: point ? trioEnergyState(point.battery) : "", color: point ? stateColor(trioEnergyState(point.battery)) : "#3a3a3c" },
+          { name: "Health", value: e?.health ?? null, state: e?.health != null ? healthState(e.health) : "", color: e?.health != null ? stateColor(healthState(e.health)) : "#3a3a3c" },
+        ],
+        accuracyPct,
+        insights,
+        sectionsHtml: sectionsHtml(
+          sectionsFor(bundle, date, {
+            stress: point?.stress ?? 0,
+            battery: point?.battery ?? 0,
+            rmssd: Number(row.rmssd_ms),
+            sdnn: Number(row.sdnn_ms),
+            lfHf: Number(row.lf_hf_ratio),
+          }),
+        ),
+        latestHtml: latestResultsHtml(bundle),
+      },
+      c.env.GIT_SHA ?? "",
+    ),
+  );
+});
