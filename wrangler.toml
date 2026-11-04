@@ -1,0 +1,21 @@
+name = "openhrv"
+main = "src/index.ts"
+compatibility_date = "2025-09-01"
+
+[vars]
+OWNER_EMAIL = "barkleesanders@gmail.com"
+GIT_SHA = "dev"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "openhrv"
+database_id = "PLACEHOLDER_SET_AT_CREATE"
+migrations_dir = "migrations"
+
+[observability.logs]
+enabled = true
+persist = true
+
+[observability.traces]
+enabled = true
+persist = true
