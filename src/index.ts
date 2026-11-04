@@ -24,18 +24,20 @@ import {
 import { WEBMCP_TOOLS, webmcpDiscovery } from "./webmcp";
 import { APPLE_TOUCH_ICON, FAVICON_ICO } from "./assets";
 import {
-  batteryCharge,
   batteryState,
   dailyAggregates,
   factorImpact,
-  pressurePct,
+  measurementGaugeDays,
+  mergeGaugeDays,
   pressureState,
+  scoreHealthDays,
   scoreSeries,
-  stressPct,
   stressState,
+  type DayAggregate,
   type FactorImpact,
   type MeasurementLike,
 } from "./insights";
+import { healthDays, type HealthDay } from "./healthdays";
 import { impactPage, scoreDetailPage } from "./views";
 import {
   parseExportXml,
@@ -108,7 +110,7 @@ app.use("*", async (c, next) => {
       status: c.res.status,
       ms: Date.now() - start,
       ray: c.req.header("cf-ray") ?? null,
-      sha: c.env.GIT_SHA ?? "dev",
+      sha: c.env.GIT_SHA || "unstamped",
     }),
   );
 });
@@ -147,19 +149,19 @@ async function first(db: D1Database, sql: string, ...bind: unknown[]): Promise<R
   return rows[0] ?? null;
 }
 
-function scores(
-  latest: Row | null,
-  baselineRmssd: number | null,
-): { battery: number | null; stress: number | null; pressure: number | null } {
-  if (!latest) return { battery: null, stress: null, pressure: null };
-  const si = Number(latest.baevsky_si);
-  const lfhf = Number(latest.lf_hf_ratio);
-  // Normative mappings: SPEC.md "Score mappings" (src/insights.ts).
-  return {
-    battery: batteryCharge(Number(latest.rmssd_ms), baselineRmssd),
-    stress: stressPct(si, lfhf),
-    pressure: pressurePct(si, lfhf),
-  };
+/** Per-day inputs from the imported health_samples store (Apple Health
+ *  daily aggregates) — the gauge path for every day without a real RR
+ *  measurement. SPEC.md "Aggregate score mappings". */
+async function healthDayInputs(db: D1Database): Promise<HealthDay[]> {
+  const samples = await all(
+    db,
+    "SELECT type, value, unit, start_at, end_at, source FROM health_samples ORDER BY start_at ASC LIMIT 10000",
+  );
+  const sleepRows = await all(db, "SELECT end_at, duration_s FROM sleep LIMIT 500");
+  return healthDays(
+    samples as unknown as Array<{ type: string; value: number | null; start_at: string; source?: string }>,
+    sleepRows as unknown as Array<{ end_at: string; duration_s: number }>,
+  );
 }
 
 async function todayData(db: D1Database): Promise<TodayData> {
@@ -168,17 +170,29 @@ async function todayData(db: D1Database): Promise<TodayData> {
     "SELECT id, taken_at, source, mean_hr_bpm, rmssd_ms, sdnn_ms, pnn50_pct, baevsky_si, lf_hf_ratio FROM measurements ORDER BY taken_at DESC LIMIT 10",
   )) as Array<Record<string, number | string>>;
   const latest = history[0] ?? null;
-  let baseline: number | null = null;
-  if (history.length > 1) {
-    const rest = history.slice(1).map((m) => Number(m.rmssd_ms)).sort((a, b) => a - b);
-    baseline = rest[Math.floor(rest.length / 2)];
-  }
-  const s = scores(latest as Row | null, baseline);
-  // Rule-based insights (D5) over the same stored data the Lab uses.
   const asc = (await all(
     db,
     "SELECT taken_at, rmssd_ms, baevsky_si, lf_hf_ratio, source FROM measurements ORDER BY taken_at ASC LIMIT 1000",
   )) as unknown as MeasurementLike[];
+  // Gauges: one merged per-day series — a real RR measurement wins its
+  // day; imported Apple Health daily aggregates fill every other day.
+  const hDays = await healthDayInputs(db);
+  const gaugeDays = mergeGaugeDays(measurementGaugeDays(asc), scoreHealthDays(hDays));
+  const latestGauge = gaugeDays[gaugeDays.length - 1] ?? null;
+  const s = latestGauge
+    ? { battery: latestGauge.battery, stress: latestGauge.stress, pressure: latestGauge.pressure }
+    : { battery: null, stress: null, pressure: null };
+  const healthLatest =
+    latestGauge?.source === "health"
+      ? {
+          date: latestGauge.date,
+          sdnnMs: latestGauge.hrvMs,
+          restingHrBpm: latestGauge.restingHrBpm,
+          sleepHours: latestGauge.sleepHours,
+          source: hDays.find((d) => d.date === latestGauge.date)?.sdnnSource ?? "Apple Health",
+        }
+      : null;
+  // Rule-based insights (D5) over the same stored data the Lab uses.
   const sleepRows = await all(db, "SELECT end_at, duration_s FROM sleep LIMIT 500");
   const stepRows = await all(db, "SELECT type, value, start_at FROM health_samples WHERE type = 'step_count' LIMIT 2000");
   const journalRows = await all(db, "SELECT created_at, mood, tags_json FROM journal LIMIT 500");
@@ -191,8 +205,19 @@ async function todayData(db: D1Database): Promise<TodayData> {
   );
   const insights = generateInsights(days, new Date().toISOString(), new Set(breathingRows.map((b) => String(b.taken_at).slice(0, 10))));
   const onboardedRow = await first(db, "SELECT value_json FROM settings WHERE key = ?", "onboarded");
-  const showWelcome = !history.length && !(onboardedRow && String(onboardedRow.value_json) === "1");
-  return { battery: s.battery, stress: s.stress, pressure: s.pressure, latest, history, insights, showWelcome };
+  const showWelcome = !history.length && !hDays.length && !(onboardedRow && String(onboardedRow.value_json) === "1");
+  return {
+    battery: s.battery,
+    stress: s.stress,
+    pressure: s.pressure,
+    latest,
+    history,
+    insights,
+    showWelcome,
+    scoreSource: latestGauge?.source ?? null,
+    scoreAt: latestGauge?.date ?? null,
+    healthLatest,
+  };
 }
 
 // ---------------------------------------------------------------- pages
@@ -230,7 +255,7 @@ app.get("/apple-touch-icon.png", (c) => c.body(new Blob([APPLE_TOUCH_ICON], { ty
 app.get("/apple-touch-icon-precomposed.png", (c) => c.body(new Blob([APPLE_TOUCH_ICON], { type: "image/png" }), 200, { "content-type": "image/png" }));
 
 // ---------------------------------------------------------------- discovery
-app.get("/api/health", (c) => c.json({ ok: true, app: "openhrv", sha: c.env.GIT_SHA ?? "dev" }));
+app.get("/api/health", (c) => c.json({ ok: true, app: "openhrv", sha: c.env.GIT_SHA || "unstamped" }));
 app.get("/.well-known/webmcp.json", (c) => c.json(webmcpDiscovery(new URL(c.req.url).origin)));
 app.get("/robots.txt", (c) => {
   const origin = new URL(c.req.url).origin;
@@ -402,16 +427,83 @@ app.get("/api/mydata", async (c) => handleMyData(c.env.DB));
 app.get("/api/scores", async (c) => {
   const rows = (await all(
     c.env.DB,
-    "SELECT taken_at, rmssd_ms, baevsky_si, lf_hf_ratio, source FROM measurements ORDER BY taken_at ASC LIMIT 200",
+    "SELECT taken_at, rmssd_ms, baevsky_si, lf_hf_ratio, source FROM measurements ORDER BY taken_at ASC LIMIT 1000",
   )) as unknown as MeasurementLike[];
-  if (!rows.length) {
+  const hDays = await healthDayInputs(c.env.DB);
+  const gaugeDays = mergeGaugeDays(measurementGaugeDays(rows), scoreHealthDays(hDays));
+  if (!gaugeDays.length) {
     const empty = { value: null, state: null, at: null, trend: [], contributors: [{ label: "No data", detail: "Take a measurement first" }] };
     return c.json({ ok: true, battery: empty, stress: empty, pressure: empty });
   }
-  const scored = scoreSeries(rows);
-  const latest = scored[scored.length - 1];
+  const latest = gaugeDays[gaugeDays.length - 1];
   const trend = (pick: "battery" | "stress" | "pressure") =>
-    scored.slice(-14).map((p) => ({ at: p.at, value: Math.round(p[pick] * 10) / 10 }));
+    gaugeDays.slice(-14).map((p) => ({ at: p.date, value: Math.round(p[pick] * 10) / 10 }));
+  const mk = (
+    pick: "battery" | "stress" | "pressure",
+    stateFn: (v: number) => string,
+    contributors: Array<{ label: string; detail: string }>,
+    at: string,
+  ) => ({
+    value: Math.round(latest[pick] * 10) / 10,
+    state: stateFn(latest[pick]),
+    at,
+    trend: trend(pick),
+    contributors,
+    source: latest.source,
+  });
+  if (latest.source === "health") {
+    // Aggregate-driven day: contributors name the aggregate signals and
+    // say so — no SI / LF-HF exists for these days (SPEC aggregate mappings).
+    const p = latest.parts!;
+    const pts = (v: number) => `${v >= 0 ? "+" : ""}${v.toFixed(0)} pts`;
+    return c.json({
+      ok: true,
+      battery: mk(
+        "battery",
+        batteryState,
+        [
+          {
+            label: "HRV (SDNN) vs baseline",
+            detail: `${latest.hrvMs.toFixed(0)} ms vs your ${latest.baselineHrvMs !== null ? `${latest.baselineHrvMs.toFixed(0)} ms median` : "—"} (from daily Health aggregates)`,
+          },
+          {
+            label: "Last night's sleep",
+            detail:
+              latest.sleepHours !== null
+                ? `${latest.sleepHours.toFixed(1)} h (${pts(p.sleepAdj)} on Battery)`
+                : "No sleep recorded for that morning",
+          },
+          {
+            label: "Resting heart rate",
+            detail: latest.restingHrBpm !== null ? `${latest.restingHrBpm.toFixed(0)} bpm (from daily Health aggregates)` : "No resting HR that day",
+          },
+        ],
+        latest.date,
+      ),
+      stress: mk(
+        "stress",
+        stressState,
+        [
+          { label: "HRV (SDNN) component", detail: `${pts(p.stressSdnnTerm)} (from daily Health aggregates)` },
+          { label: "Resting HR component", detail: pts(p.stressRhrTerm) },
+          { label: "Sleep debt component", detail: `${p.stressSleepTerm.toFixed(0)} pts` },
+        ],
+        latest.date,
+      ),
+      pressure: mk(
+        "pressure",
+        pressureState,
+        [
+          { label: "Stress-load component", detail: `${(0.55 * latest.stress).toFixed(0)} pts (from daily Health aggregates)` },
+          { label: "Sleep-debt component", detail: `${p.pressureSleepTerm.toFixed(0)} pts` },
+          { label: "Resting HR component", detail: pts(p.pressureRhrTerm) },
+        ],
+        latest.date,
+      ),
+    });
+  }
+  const scored = scoreSeries(rows);
+  const mLatest = scored[scored.length - 1];
   const sleepRows = await all(c.env.DB, "SELECT start_at, end_at, duration_s FROM sleep ORDER BY end_at DESC LIMIT 30");
   const lastSleep = sleepRows[0];
   const sleepHrs = lastSleep ? Number(lastSleep.duration_s) / 3600 : null;
@@ -419,37 +511,50 @@ app.get("/api/scores", async (c) => {
     ? sleepRows.map((r) => Number(r.duration_s) / 3600).sort((a, b) => a - b)[Math.floor(sleepRows.length / 2)]
     : null;
   const priorStress = scored.length > 1 ? scored.slice(0, -1).reduce((a, p) => a + p.stress, 0) / (scored.length - 1) : null;
-  const mk = (
-    pick: "battery" | "stress" | "pressure",
-    stateFn: (v: number) => string,
-    contributors: Array<{ label: string; detail: string }>,
-  ) => ({ value: Math.round(latest[pick] * 10) / 10, state: stateFn(latest[pick]), at: latest.at, trend: trend(pick), contributors });
   return c.json({
     ok: true,
     battery: mk("battery", batteryState, [
       { label: "Last sleep", detail: sleepHrs !== null ? `${sleepHrs.toFixed(1)} h (your median ${medianSleep?.toFixed(1)} h)` : "No sleep logged yet — import from Apple Health" },
       { label: "Prior stress load", detail: priorStress !== null ? `avg stress ${priorStress.toFixed(0)} before this reading` : "Not enough history yet" },
-      { label: "RMSSD vs baseline", detail: `${latest.rmssd.toFixed(0)} ms in the latest measurement` },
-    ]),
+      { label: "RMSSD vs baseline", detail: `${mLatest.rmssd.toFixed(0)} ms in the latest measurement` },
+    ], mLatest.at),
     stress: mk("stress", stressState, [
-      { label: "Baevsky stress index", detail: `${latest.si.toFixed(0)} (primary driver)` },
-      { label: "LF / HF balance", detail: latest.lfhf.toFixed(2) },
-      { label: "RMSSD", detail: `${latest.rmssd.toFixed(1)} ms in the latest measurement` },
-    ]),
+      { label: "Baevsky stress index", detail: `${mLatest.si.toFixed(0)} (primary driver)` },
+      { label: "LF / HF balance", detail: mLatest.lfhf.toFixed(2) },
+      { label: "RMSSD", detail: `${mLatest.rmssd.toFixed(1)} ms in the latest measurement` },
+    ], mLatest.at),
     pressure: mk("pressure", pressureState, [
-      { label: "Stress-index component", detail: `${(latest.si / 3.2).toFixed(0)} pts` },
-      { label: "LF/HF component", detail: `${Math.max(0, (latest.lfhf - 1) * 6).toFixed(0)} pts` },
+      { label: "Stress-index component", detail: `${(mLatest.si / 3.2).toFixed(0)} pts` },
+      { label: "LF/HF component", detail: `${Math.max(0, (mLatest.lfhf - 1) * 6).toFixed(0)} pts` },
       { label: "Readings in history", detail: `${scored.length}` },
-    ]),
+    ], mLatest.at),
   });
 });
 
-async function computeImpacts(db: D1Database): Promise<FactorImpact[]> {
+/** Day aggregates for factor impact: measurement days merged with
+ *  imported-health days (measurement wins its day), so sleep factors
+ *  intersect the full imported series — not just measurement days. The
+ *  HRV slot carries RMSSD on measurement days and daily SDNN on health
+ *  days; `hrvBasis` says which, and the Impact page labels it honestly. */
+async function impactDayAggregates(
+  db: D1Database,
+): Promise<{ days: DayAggregate[]; hrvBasis: "rmssd" | "sdnn" | "mixed" }> {
   const rows = (await all(
     db,
     "SELECT taken_at, rmssd_ms, baevsky_si, lf_hf_ratio FROM measurements ORDER BY taken_at ASC LIMIT 1000",
   )) as unknown as MeasurementLike[];
-  const days = dailyAggregates(rows);
+  const mDays = dailyAggregates(rows);
+  const hGauge = scoreHealthDays(await healthDayInputs(db));
+  const byDate = new Map<string, DayAggregate>();
+  for (const g of hGauge) {
+    byDate.set(g.date, { date: g.date, rmssd: g.hrvMs, battery: g.battery, stress: g.stress, pressure: g.pressure, count: 1 });
+  }
+  for (const d of mDays) byDate.set(d.date, d);
+  const days = [...byDate.values()].sort((a, b) => (a.date < b.date ? -1 : 1));
+  return { days, hrvBasis: mDays.length && hGauge.length ? "mixed" : hGauge.length ? "sdnn" : "rmssd" };
+}
+
+async function impactFactors(db: D1Database): Promise<Array<{ name: string; dates: Set<string> }>> {
   const factors: Array<{ name: string; dates: Set<string> }> = [];
   const journal = await all(db, "SELECT created_at, tags_json FROM journal LIMIT 500");
   const tagDates = new Map<string, Set<string>>();
@@ -472,38 +577,17 @@ async function computeImpacts(db: D1Database): Promise<FactorImpact[]> {
   }
   if (goodSleep.size) factors.push({ name: "Sleep 7h+", dates: goodSleep });
   if (shortSleep.size) factors.push({ name: "Short sleep (<6h)", dates: shortSleep });
-  return factorImpact(days, factors);
+  return factors;
+}
+
+async function computeImpacts(db: D1Database): Promise<FactorImpact[]> {
+  const { days } = await impactDayAggregates(db);
+  return factorImpact(days, await impactFactors(db));
 }
 
 app.get("/api/impact", async (c) => {
-  const rows = (await all(
-    c.env.DB,
-    "SELECT taken_at, rmssd_ms, baevsky_si, lf_hf_ratio FROM measurements ORDER BY taken_at ASC LIMIT 1000",
-  )) as unknown as MeasurementLike[];
-  const days = dailyAggregates(rows);
-  const factors: Array<{ name: string; dates: Set<string> }> = [];
-  const journal = await all(c.env.DB, "SELECT created_at, tags_json FROM journal LIMIT 500");
-  const tagDates = new Map<string, Set<string>>();
-  for (const j of journal) {
-    const date = String(j.created_at).slice(0, 10);
-    for (const t of JSON.parse(String(j.tags_json ?? "[]")) as string[]) {
-      if (!tagDates.has(t)) tagDates.set(t, new Set());
-      tagDates.get(t)!.add(date);
-    }
-  }
-  for (const [name, dates] of tagDates) factors.push({ name: `tag: ${name}`, dates });
-  const sleepRows = await all(c.env.DB, "SELECT end_at, duration_s FROM sleep LIMIT 500");
-  const goodSleep = new Set<string>();
-  const shortSleep = new Set<string>();
-  for (const s of sleepRows) {
-    const d = String(s.end_at).slice(0, 10);
-    const hrs = Number(s.duration_s) / 3600;
-    if (hrs >= 7) goodSleep.add(d);
-    if (hrs > 0 && hrs < 6) shortSleep.add(d);
-  }
-  if (goodSleep.size) factors.push({ name: "Sleep 7h+", dates: goodSleep });
-  if (shortSleep.size) factors.push({ name: "Short sleep (<6h)", dates: shortSleep });
-  return c.json({ ok: true, days: days.length, impacts: factorImpact(days, factors) });
+  const { days, hrvBasis } = await impactDayAggregates(c.env.DB);
+  return c.json({ ok: true, days: days.length, hrvBasis, impacts: factorImpact(days, await impactFactors(c.env.DB)) });
 });
 
 // ---------------------------------------------------------------- wave 2: sleep, categories, lab, coach, voice, tests, settings

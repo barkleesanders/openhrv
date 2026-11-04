@@ -56,6 +56,34 @@ LF/HF ≤ 10%. The Vitest suite must reproduce every vector within tolerance.
   delta %, and counts; minimum sample 3 days with + 3 days without, else the
   card reports insufficient data.
 
+### Aggregate score mappings (imported daily Health aggregates — fix wave 2026-11-03)
+
+Days whose only HRV input is an imported daily aggregate (Apple Health
+SDNN, resting HR, sleep — no RR series, no Baevsky SI, no LF/HF) are scored
+from the aggregate signals only, always relative to the owner's own
+baselines (median of prior days in the same series; population norms are
+never the score basis). The RR mappings above stay normative for
+measurement days; a real measurement wins its calendar day and the
+aggregate path fills every other day — one merged day series feeds
+`todayData`, `/api/scores`, `/api/watch/today` and factor impact.
+
+- **Battery** = clamp(62 + 38 · ln(SDNN / personal-baseline SDNN) + sleepAdj),
+  sleepAdj = clamp((last night's sleep − personal median sleep) · 3, −12, +8)
+  (8 h target stands in when fewer than 3 nights are recorded). Cold start:
+  the first aggregate day is its own reference (neutral Battery).
+- **Stress** = clamp(42 + sdnnTerm + rhrTerm + sleepTerm), where
+  sdnnTerm = clamp((baseline SDNN − SDNN) / baseline SDNN · 150, −35, +45),
+  rhrTerm = clamp((resting HR − baseline resting HR) · 2, −20, +25),
+  sleepTerm = min(20, sleep debt vs the 8 h target · 5).
+- **Pressure** = clamp(0.55 · Stress + min(25, sleep debt · 7) +
+  clamp((resting HR − baseline resting HR) · 1.2, −12, +18)) — derived from
+  SDNN + resting HR + sleep debt (no LF/HF exists for aggregate days); the
+  detail pages label every such contributor "from daily Health aggregates".
+- **Factor impact** runs on the merged day series; the HRV slot carries
+  RMSSD on measurement days and daily SDNN on aggregate days, and
+  `/api/impact` reports `hrvBasis` (`rmssd` | `sdnn` | `mixed`) so the
+  Impact page labels the metric honestly.
+
 ## Claim table
 
 Status: `pass` = live/test evidence exists · `in-progress` = built, evidence
@@ -71,7 +99,7 @@ D1–D8.
 | 5 | **Health Auto Export REST import** (§b,g — D4 primary pipe) | `POST /api/import/health-auto-export` accepts the Health Auto Export app's JSON (metrics array: HRV SDNN, resting HR, heart rate, sleep analysis, BP, SpO2, respiratory rate, steps, workouts…), gated by a per-owner bearer import token (shown in Settings with copy button + in-app setup instructions). Samples land in the normalized store | D4 | pass |
 | 6 | **iOS Shortcuts import** (§b,g) | `POST /api/import/shortcut` (same import token) accepts flexible JSON health samples; the Shortcut recipe (read HRV/health in Shortcuts → POST) is documented in-app on the Import/Settings screen | D4 | pass |
 | 7 | **Apple Health export.xml upload** (§b,g) | Settings/Import page file upload; Record elements parsed into the normalized store (HR, HRV SDNN, BP, sleep, steps…) with source=apple_health | D4 | pass |
-| 8 | **Normalized samples store** (§g) | One `health_samples` store keyed by type + source (apple_health / strava / manual / ble / ppg / shortcut), feeding Today, gauges, scores and factor impact; source attribution preserved on every sample | D4 | pass |
+| 8 | **Normalized samples store** (§g) | One `health_samples` store keyed by type + source (apple_health / strava / manual / ble / ppg / shortcut), feeding Today, gauges, scores and factor impact; source attribution preserved on every sample (read path connected in the 2026-11-03 fix wave: healthDays → scoreHealthDays merge; before that the gauges read only the measurements table and the claim was write-side only) | D4 | pass |
 | 9 | **Write-back feed toward Apple Health** (§b,g) | `GET /api/export/health-writeback` (import token) returns samples the phone should write into Health (breathing mindful minutes, measurement HRV/HR summaries, in-app sleep) + a documented iOS Shortcut recipe using "Log Health Sample" (+ downloadable recipe file). Platform truth: a Worker cannot write HealthKit directly — automatic native write-back is the D7 companion's path (HealthKit entitlement); the Worker-side feed + Shortcut is the build-now lane | D4 | pass |
 | 10 | **Full data export** (§b) | Settings: download all owner data (measurements, samples, journal, sleep) as JSON and CSV | D4 | pass |
 | 11 | **Strava connector — OAuth connect** (D9) | `/connect/strava` → Strava authorize → callback → tokens stored encrypted in D1 (AES-GCM, key from Worker secret). Requires the owner's Strava API app credentials as Worker secrets; without them the Connect UI shows a clear "needs your Strava API keys" state | D9 | pass |
@@ -79,10 +107,10 @@ D1–D8.
 | 13 | **Strava webhook receiver** (D9) | `GET/POST /api/webhooks/strava`: verify-token handshake; activity create/update events trigger a pull (or are queued in `events` when credentials are absent) | D9 | pass |
 | 14 | **Withings connector** (phase 2 — noted, not this build) | Scale / blood-pressure via the same normalized-store pattern; listed so the connector layer's next step is on record | D9 | open |
 | 15 | Today dashboard (§b,c) | `/` Today page: Battery + Pressure gauges, latest metrics, recent history | D2 | pass |
-| 16 | **Battery (charge)** — headline gauge + Battery detail screen (§b, BatteryDetails module; Watch Battery gauge/detail) | Today shows Battery as a charge % ("how charged you are") with state label. Detail screen `/battery`: charge level + state, 14-reading charge trend chart, and a factors panel listing what is draining/recharging it (last sleep duration vs baseline, prior-day stress load, recent measurement load) each with direction + magnitude or an honest "no data logged" note. Score: original heuristic from RMSSD vs personal baseline (SPEC math notes) | D5 | pass |
-| 17 | **Stress** — headline gauge + Stress detail screen (§b, Pressure/stress details; Watch Pressure gauge/detail) | Today shows a Stress gauge (% + state label: Low/Moderate/High/Very high). Detail screen `/stress`: current stress from the measurement engine (Baevsky stress index primary, LF/HF secondary — published mapping in SPEC math notes), 14-reading trend chart, and a what-drives-it breakdown (SI, LF/HF, RMSSD vs baseline, latest measurement source/time) | D5 | pass |
-| 18 | **Pressure** — headline gauge + Pressure detail screen (§b, BloodPressureDetails/PressureDetails modules; Watch Pressure gauge) | Today shows a Pressure gauge (% load). Detail screen `/pressure`: current load, 14-reading trend chart, contributors panel (Baevsky SI component, LF/HF component, recent measurement density) mirroring the decompiled Pressure gauge + detail structure | D5 | pass |
-| 19 | **Stress impact / factor impact** (§b, ScienceLab + Insights + Tag Bank) | Impact cards for every tracked factor — journal tags (incl. caffeine/alcohol-style logged tags), sleep duration/quality (from sleep records), activity days — each card: measured impact on Stress, HRV (RMSSD) and Battery vs the owner's personal baseline, computed as days-with-factor vs days-without means with delta %, effect direction, and sample counts (n with / n without). Below the minimum sample (3 with + 3 without) the card shows an honest "not enough data yet" state instead of a number. Impact list screen `/impact` + per-factor detail view | D5 | pass |
+| 16 | **Battery (charge)** — headline gauge + Battery detail screen (§b, BatteryDetails module; Watch Battery gauge/detail) | Today shows Battery as a charge % ("how charged you are") with state label. Detail screen `/battery`: charge level + state, 14-reading charge trend chart, and a factors panel listing what is draining/recharging it (last sleep duration vs baseline, prior-day stress load, recent measurement load) each with direction + magnitude or an honest "no data logged" note.  Score: original heuristic from RMSSD vs personal baseline (SPEC math notes). Fix wave 2026-11-03: Battery also computes from imported daily SDNN aggregates (Aggregate score mappings above); the original pass evidenced the RR path only — production re-proof in the goal's dashboard-proof folder (fixed-*.png) | D5 | pass |
+| 17 | **Stress** — headline gauge + Stress detail screen (§b, Pressure/stress details; Watch Pressure gauge/detail) | Today shows a Stress gauge (% + state label: Low/Moderate/High/Very high). Detail screen `/stress`: current stress from the measurement engine (Baevsky stress index primary, LF/HF secondary — published mapping in SPEC math notes), 14-reading trend chart, and a what-drives-it breakdown (SI, LF/HF, RMSSD vs baseline, latest measurement source/time). Fix wave 2026-11-03: Stress also computes from imported daily aggregates (SDNN + resting HR + sleep debt, Aggregate score mappings); the original pass evidenced the RR path only | D5 | pass |
+| 18 | **Pressure** — headline gauge + Pressure detail screen (§b, BloodPressureDetails/PressureDetails modules; Watch Pressure gauge) | Today shows a Pressure gauge (% load). Detail screen `/pressure`: current load, 14-reading trend chart, contributors panel (Baevsky SI component, LF/HF component, recent measurement density) mirroring the decompiled Pressure gauge + detail structure. Fix wave 2026-11-03: Pressure also derives from the aggregate signals (SDNN + resting HR + sleep debt — no LF/HF on aggregate days) with contributors labeled "from daily Health aggregates"; the original pass evidenced the RR path only | D5 | pass |
+| 19 | **Stress impact / factor impact** (§b, ScienceLab + Insights + Tag Bank) | Impact cards for every tracked factor — journal tags (incl. caffeine/alcohol-style logged tags), sleep duration/quality (from sleep records), activity days — each card: measured impact on Stress, HRV (RMSSD) and Battery vs the owner's personal baseline, computed as days-with-factor vs days-without means with delta %, effect direction, and sample counts (n with / n without). Below the minimum sample (3 with + 3 without) the card shows an honest "not enough data yet" state instead of a number. Impact list screen `/impact` + per-factor detail view. Fix wave 2026-11-03: factor days now intersect the merged measurement + imported-health day series (sleep factors compute over the full imported SDNN series, `hrvBasis` reported); the original pass evidenced measurement days only | D5 | pass |
 | 20 | Health score / category details — Activity, Blood Pressure, Health (§b) | My Data categories with per-category views: `/mydata/:category` detail pages (Activity, Blood Pressure — systolic/diastolic pairing, Health, Body, Sleep & Mind) with latest + 7-day average + range + counts per sample type, served by `GET /api/mydata/categories`; wave-2 tests seed samples and assert the computed summaries | D5 | pass |
 | 21 | Sleep flow + sleep details (§b,g) | Sleep detail screen `/sleep` + `GET /api/sleep`: per-night duration vs 8 h target, debt vs the owner's median baseline, 7-night debt total, median/average duration, and stage totals (deep/REM/core/awake) from Health Auto Export stage samples; wave-2 tests verify debt + stage math on seeded nights | D5 | pass |
 | 22 | Journal + manual tracking + tags (§b) | Journal page: entries, mood, tags; API CRUD; wave 2 adds voice comments (row 23) attachable to entries | D5 | pass |

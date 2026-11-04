@@ -44,7 +44,7 @@ npm install
 npm run check          # typecheck + vitest (incl. HRV oracle vectors)
 npm run dev            # wrangler dev
 npm run db:migrate     # apply D1 migrations (remote)
-npm run deploy         # wrangler deploy, stamps GIT_SHA from HEAD
+npm run deploy         # scripts/deploy.sh - freshness gate + check + deploy, stamps GIT_SHA from HEAD
 ```
 
 The HRV engine (`src/hrv.ts`) is verified against an independent Python

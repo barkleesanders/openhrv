@@ -79,6 +79,17 @@ export interface TodayData {
   history: Array<Record<string, number | string>>;
   insights?: Array<{ severity: string; text: string }>;
   showWelcome?: boolean;
+  /** Which input drives today's gauges: a real RR measurement, or the
+   *  imported Apple Health daily aggregates. */
+  scoreSource?: "measurement" | "health" | null;
+  scoreAt?: string | null;
+  healthLatest?: {
+    date: string;
+    sdnnMs: number;
+    restingHrBpm: number | null;
+    sleepHours: number | null;
+    source: string;
+  } | null;
 }
 
 export function todayPage(d: TodayData, sha = ""): string {
@@ -100,7 +111,19 @@ document.getElementById("shareLatest").addEventListener("click", function() {
   else if (navigator.clipboard) navigator.clipboard.writeText(text).then(function(){ document.getElementById("shareLatest").textContent = "Copied to clipboard"; });
 });
 </script>`
-    : `<div class="card"><h2>No measurements yet</h2><p class="sub">Take your first HRV measurement to light up this dashboard.</p><p><a href="/measure"><button>Measure now</button></a></p></div>`;
+    : d.healthLatest
+      ? `<div class="card"><h2>Latest from Apple Health</h2>
+       <div class="stat"><span>HRV (SDNN) · ${d.healthLatest.date}</span><b>${d.healthLatest.sdnnMs.toFixed(1)} ms</b></div>
+       ${d.healthLatest.restingHrBpm !== null ? `<div class="stat"><span>Resting heart rate</span><b>${d.healthLatest.restingHrBpm.toFixed(0)} bpm</b></div>` : ""}
+       ${d.healthLatest.sleepHours !== null ? `<div class="stat"><span>Last night's sleep</span><b>${d.healthLatest.sleepHours.toFixed(1)} h</b></div>` : ""}
+       <div class="stat"><span>Source</span><b>${String(d.healthLatest.source).replace(/</g, "&lt;")}</b></div>
+       <p class="sub">Today's gauges are computed from your imported daily Health aggregates. An in-app measurement adds beat-to-beat RMSSD, stress index and LF/HF detail.</p>
+       <p><a href="/measure"><button>Measure now</button></a></p></div>`
+      : `<div class="card"><h2>No measurements yet</h2><p class="sub">Take your first HRV measurement to light up this dashboard.</p><p><a href="/measure"><button>Measure now</button></a></p></div>`;
+  const sourceNote =
+    d.scoreSource === "health"
+      ? `<p class="sub" style="text-align:center">Gauges from Apple Health daily data · ${d.scoreAt ?? ""}</p>`
+      : "";
   const insights = d.insights && d.insights.length
     ? `<div class="card"><h2>Insights</h2>${d.insights.map((i) => `<div class="stat"><span style="max-width:85%">${i.text.replace(/</g, "&lt;")}</span><b>${i.severity === "warn" ? "⚠" : i.severity === "good" ? "✓" : "ℹ"}</b></div>`).join("")}<p class="sub">Computed from your stored data only — see <a href="/lab" style="color:var(--acc)">Science Lab</a> for the correlations behind them.</p></div>`
     : "";
@@ -125,7 +148,7 @@ document.getElementById("shareLatest").addEventListener("click", function() {
      <div class="row">
        <a href="/pressure" style="flex:1;text-decoration:none;color:inherit"><div class="card"><div class="glabel">Pressure · load</div><div class="gauge" style="color:var(--warn)">${score(d.pressure)}</div><div class="sub">load estimate from stress index + LF/HF · tap for detail</div></div></a>
        <a href="/impact" style="flex:1;text-decoration:none;color:inherit"><div class="card"><div class="glabel">Factor impact</div><div class="gauge" style="font-size:20px;padding-top:10px">What moves you →</div><div class="sub">measured impact of tags, sleep &amp; habits</div></div></a>
-     </div>${insights}${latest}${hist}`,
+     </div>${sourceNote}${insights}${latest}${hist}`,
     sha,
   );
 }
@@ -339,7 +362,8 @@ fetch("/api/mydata").then(function(r){return r.json();}).then(function(j) {
     }).join("") : "<p class='sub'>No imported samples yet.</p>";
   });
   var ms = j.measurements.slice().reverse();
-  document.getElementById("hist").innerHTML = j.measurements.map(function(m){ return "<div class='stat'><span>" + String(m.taken_at).slice(0,16).replace("T"," ") + " · " + m.source + "</span><b>" + Number(m.mean_hr_bpm).toFixed(0) + " bpm · RMSSD " + Number(m.rmssd_ms).toFixed(0) + "</b> <button class='ghost' style='padding:2px 8px' onclick='shareText(\"OpenHRV " + String(m.taken_at).slice(0,10) + " — HR " + Number(m.mean_hr_bpm).toFixed(0) + " bpm · RMSSD " + Number(m.rmssd_ms).toFixed(1) + " ms · SDNN " + Number(m.sdnn_ms).toFixed(1) + " ms\", this)'>Share</button></div>"; }).join("") || "<p class='sub'>Nothing yet.</p>";
+  document.getElementById("hist").innerHTML = j.measurements.map(function(m, i){ return "<div class='stat'><span>" + String(m.taken_at).slice(0,16).replace("T"," ") + " · " + m.source + "</span><b>" + Number(m.mean_hr_bpm).toFixed(0) + " bpm · RMSSD " + Number(m.rmssd_ms).toFixed(0) + "</b> <button class='ghost sharebtn' style='padding:2px 8px' data-i='" + i + "'>Share</button></div>"; }).join("") || "<p class='sub'>Nothing yet.</p>";
+  document.querySelectorAll(".sharebtn").forEach(function(b){ b.addEventListener("click", function(){ var m = j.measurements[Number(b.getAttribute("data-i"))]; shareText("OpenHRV " + String(m.taken_at).slice(0,10) + " — HR " + Number(m.mean_hr_bpm).toFixed(0) + " bpm · RMSSD " + Number(m.rmssd_ms).toFixed(1) + " ms · SDNN " + Number(m.sdnn_ms).toFixed(1) + " ms", b); }); });
   var c = document.getElementById("chart"), x = c.getContext("2d");
   if (ms.length > 1) { var vs = ms.map(function(m){return m.rmssd_ms;}), mn = Math.min.apply(null, vs), mx = Math.max.apply(null, vs);
     x.strokeStyle = "#4ade80"; x.beginPath();
@@ -540,19 +564,30 @@ export function scoreDetailPage(kind: "battery" | "stress" | "pressure", sha = "
 <script>
 fetch("/api/scores").then(function(r){return r.json();}).then(function(j) {
   var s = j["${kind}"];
-  if (!s || s.value === null) { document.getElementById("state").textContent = "No measurements yet — take one to compute this score."; return; }
+  var driversEl = document.getElementById("drivers");
+  if (s && s.contributors && s.contributors.length) {
+    driversEl.innerHTML = s.contributors.map(function(ct) {
+      return "<div class='stat'><span>" + ct.label + "</span><b>" + ct.detail + "</b></div>";
+    }).join("");
+  }
+  if (!s || s.value === null) {
+    document.getElementById("state").textContent = "No data yet — take a measurement or sync Apple Health to compute this score.";
+    document.getElementById("tmsg").textContent = "Trend appears after a few days of data.";
+    if (!s || !s.contributors || !s.contributors.length) driversEl.innerHTML = "<p class='sub'>No data — take a measurement first.</p>";
+    return;
+  }
   document.getElementById("gauge").textContent = Math.round(s.value) + ("${kind}" === "pressure" ? "" : "%");
-  document.getElementById("state").textContent = s.state + " · updated " + String(s.at).slice(0,16).replace("T"," ");
-  document.getElementById("drivers").innerHTML = s.contributors.map(function(ct) {
-    return "<div class='stat'><span>" + ct.label + "</span><b>" + ct.detail + "</b></div>";
-  }).join("");
+  document.getElementById("state").textContent = s.state + " · updated " + String(s.at).slice(0,16).replace("T"," ") + (s.source === "health" ? " · from Apple Health daily data" : "");
   var vs = s.trend.map(function(p){return p.value;});
   if (vs.length > 1) {
     var c = document.getElementById("trend"), x = c.getContext("2d");
     x.strokeStyle = "#4ade80"; x.beginPath();
     vs.forEach(function(v, i){ var px = i / (vs.length - 1) * c.width, py = c.height - v / 100 * (c.height - 10) - 5; i ? x.lineTo(px, py) : x.moveTo(px, py); });
     x.stroke();
-  } else document.getElementById("tmsg").textContent = "Trend appears after a few measurements.";
+  } else document.getElementById("tmsg").textContent = "Trend appears after a few days of data.";
+}).catch(function() {
+  document.getElementById("drivers").innerHTML = "<p class='sub'>Could not load — reload to try again.</p>";
+  document.getElementById("tmsg").textContent = "Trend unavailable.";
 });
 </script>`,
     sha,
@@ -576,10 +611,11 @@ function metricRow(name, m, invert) {
 fetch("/api/impact").then(function(r){return r.json();}).then(function(j) {
   var el = document.getElementById("cards");
   if (!j.impacts.length) { el.innerHTML = "<p class='sub'>No factors tracked yet. Add tags to journal entries (e.g. caffeine, alcohol, workout) and keep measuring — impact cards appear here.</p>"; return; }
+  var hrvLabel = j.hrvBasis === "sdnn" ? "HRV · SDNN (daily)" : j.hrvBasis === "mixed" ? "HRV · RMSSD / SDNN" : "HRV · RMSSD";
   el.innerHTML = j.impacts.map(function(f, idx) {
     var head = "<h2 style='margin-top:14px'>" + f.factor.replace(/</g,"&lt;") + "</h2><p class='sub'>" + f.nWith + " days with · " + f.nWithout + " days without</p>";
     if (!f.enoughData) return head + "<p class='sub'>Not enough data yet — keep logging this factor and measuring.</p>";
-    return head + "<div id='f" + idx + "'>" + metricRow("HRV · RMSSD", f.metrics.rmssd, false) + metricRow("Battery", f.metrics.battery, false) + metricRow("Stress", f.metrics.stress, true) + "</div>";
+    return head + "<div id='f" + idx + "'>" + metricRow(hrvLabel, f.metrics.rmssd, false) + metricRow("Battery", f.metrics.battery, false) + metricRow("Stress", f.metrics.stress, true) + "</div>";
   }).join("");
 });
 </script>`,

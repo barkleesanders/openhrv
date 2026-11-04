@@ -126,6 +126,130 @@ function metricImpact(days: DayAggregate[], withSet: Set<string>, pick: (d: DayA
   return { withMean: wm, withoutMean: wom, deltaPct: wom !== 0 ? ((wm - wom) / Math.abs(wom)) * 100 : 0 };
 }
 
+/* ------------------------------------------------------------------ *
+ * Daily-aggregate gauge path (SPEC.md "Aggregate score mappings").
+ * Imported Apple Health data arrives as daily aggregates (SDNN, resting
+ * HR, sleep) with no RR series, Baevsky SI or LF/HF. The mappings below
+ * score those days from the aggregate signals ONLY, always relative to
+ * the owner's own baselines (median of prior days) — population norms
+ * are never the score basis. The one fixed anchor is the app's 8 h sleep
+ * target, already used by the sleep module.
+ * ------------------------------------------------------------------ */
+
+export interface HealthDayInput {
+  date: string;
+  sdnnMs: number | null;
+  restingHrBpm: number | null;
+  sleepHours: number | null;
+}
+
+export interface AggregateParts {
+  sleepAdj: number; // Battery sleep adjustment (pts)
+  stressSdnnTerm: number;
+  stressRhrTerm: number;
+  stressSleepTerm: number;
+  pressureSleepTerm: number;
+  pressureRhrTerm: number;
+}
+
+export interface GaugeDay {
+  date: string;
+  at: string;
+  battery: number;
+  stress: number;
+  pressure: number;
+  hrvMs: number; // RMSSD for measurement days, SDNN for health days
+  hrvKind: "rmssd" | "sdnn";
+  source: "measurement" | "health";
+  restingHrBpm: number | null;
+  sleepHours: number | null;
+  baselineHrvMs: number | null;
+  parts: AggregateParts | null; // health days only
+}
+
+const SLEEP_TARGET_H = 8;
+
+/** Score imported daily aggregates into gauge days. Baselines are the
+ *  median of PRIOR days in the same series (cold start: the first day is
+ *  its own reference, giving a neutral Battery). */
+export function scoreHealthDays(days: HealthDayInput[]): GaugeDay[] {
+  const out: GaugeDay[] = [];
+  const priorSdnn: number[] = [];
+  const priorRhr: number[] = [];
+  const sleepHist = days.map((d) => d.sleepHours).filter((x): x is number => x !== null);
+  const medianSleep = sleepHist.length >= 3 ? median(sleepHist) : null;
+  for (const d of days) {
+    if (d.sdnnMs === null) {
+      if (d.restingHrBpm !== null) priorRhr.push(d.restingHrBpm);
+      continue;
+    }
+    const baselineSdnn = priorSdnn.length ? median(priorSdnn) : null;
+    const baselineRhr = priorRhr.length ? median(priorRhr) : null;
+    const sleepRef = medianSleep ?? SLEEP_TARGET_H;
+    const sleepAdj = d.sleepHours === null ? 0 : clamp((d.sleepHours - sleepRef) * 3, -12, 8);
+    // Same log-ratio form as the RR Battery, applied to SDNN vs the
+    // personal SDNN baseline (the ratio is unit-free), plus sleep.
+    const battery = clamp(batteryCharge(d.sdnnMs, baselineSdnn ?? d.sdnnMs) + sleepAdj);
+    const debtH = d.sleepHours === null ? 0 : Math.max(0, SLEEP_TARGET_H - d.sleepHours);
+    const stressSdnnTerm = baselineSdnn
+      ? clamp(((baselineSdnn - d.sdnnMs) / baselineSdnn) * 150, -35, 45)
+      : 0;
+    const stressRhrTerm =
+      d.restingHrBpm !== null && baselineRhr ? clamp((d.restingHrBpm - baselineRhr) * 2, -20, 25) : 0;
+    const stressSleepTerm = Math.min(20, debtH * 5);
+    const stress = clamp(42 + stressSdnnTerm + stressRhrTerm + stressSleepTerm);
+    const pressureSleepTerm = Math.min(25, debtH * 7);
+    const pressureRhrTerm =
+      d.restingHrBpm !== null && baselineRhr ? clamp((d.restingHrBpm - baselineRhr) * 1.2, -12, 18) : 0;
+    const pressure = clamp(0.55 * stress + pressureSleepTerm + pressureRhrTerm);
+    out.push({
+      date: d.date,
+      at: d.date,
+      battery,
+      stress,
+      pressure,
+      hrvMs: d.sdnnMs,
+      hrvKind: "sdnn",
+      source: "health",
+      restingHrBpm: d.restingHrBpm,
+      sleepHours: d.sleepHours,
+      baselineHrvMs: baselineSdnn,
+      parts: { sleepAdj, stressSdnnTerm, stressRhrTerm, stressSleepTerm, pressureSleepTerm, pressureRhrTerm },
+    });
+    priorSdnn.push(d.sdnnMs);
+    if (d.restingHrBpm !== null) priorRhr.push(d.restingHrBpm);
+  }
+  return out;
+}
+
+/** Gauge days from real RR measurements (day grain, same averaging the
+ *  factor-impact path has always used). */
+export function measurementGaugeDays(asc: MeasurementLike[]): GaugeDay[] {
+  return dailyAggregates(asc).map((d) => ({
+    date: d.date,
+    at: d.date,
+    battery: d.battery,
+    stress: d.stress,
+    pressure: d.pressure,
+    hrvMs: d.rmssd,
+    hrvKind: "rmssd" as const,
+    source: "measurement" as const,
+    restingHrBpm: null,
+    sleepHours: null,
+    baselineHrvMs: null,
+    parts: null,
+  }));
+}
+
+/** One coherent day series: a real RR measurement wins its day; imported
+ *  daily aggregates fill every other day. */
+export function mergeGaugeDays(measurementDays: GaugeDay[], healthDays: GaugeDay[]): GaugeDay[] {
+  const byDate = new Map<string, GaugeDay>();
+  for (const d of healthDays) byDate.set(d.date, d);
+  for (const d of measurementDays) byDate.set(d.date, d);
+  return [...byDate.values()].sort((a, b) => (a.date < b.date ? -1 : 1));
+}
+
 /** Days-with vs days-without impact per factor, vs the personal baseline
  *  (the without-days ARE the baseline). Honest insufficient-data state below
  *  MIN_FACTOR_DAYS on either side. */

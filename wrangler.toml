@@ -4,7 +4,9 @@ compatibility_date = "2025-09-01"
 
 [vars]
 OWNER_EMAIL = "barkleesanders@gmail.com"
-GIT_SHA = "dev"
+# GIT_SHA is stamped from git HEAD by scripts/deploy.sh on every deploy.
+# Never put a placeholder value here - an unstamped deploy must be visible.
+GIT_SHA = ""
 COACH_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
 
 [[d1_databases]]
