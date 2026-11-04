@@ -100,11 +100,18 @@ async function main() {
     const samples = await req("GET", "/api/samples?type=hrv_sdnn&limit=200");
     const rows = samples.json?.samples ?? [];
     const hourly = rows.find((s) => typeof s.external_id === "string" && s.external_id.includes(":hourly:"));
-    if (hourly) {
-      const src = String(hourly.external_id).split(":").slice(3).join(":");
+    // Production hourly ids are `${type}:hourly:${date}:${source}` and
+    // the date itself contains colons - parse with an anchored regex,
+    // never split(":") (a naive split mangled the source and inserted a
+    // duplicate on the first smoke run; that row was deleted).
+    const m = hourly ? String(hourly.external_id).match(/^(.+?):hourly:(.{25}):(.*)$/) : null;
+    if (hourly && m) {
+      const src = m[3];
       const payload = { data: { metrics: [{ name: "hrv_sdnn", units: "ms", data: [{ date: hourly.start_at, qty: hourly.value, source: src, granularity: "hourly" }] }] } };
       const dedup = await req("POST", "/api/import/health-auto-export", { headers: ih, body: payload });
       ok("HAE import dedup (inserted=0)", dedup.json?.ok === true && dedup.json?.inserted === 0, `inserted=${dedup.json?.inserted}`);
+    } else if (hourly) {
+      skipLoud("HAE import dedup", `unparseable hourly external_id: ${hourly.external_id}`);
     } else {
       skipLoud("HAE import dedup", "no hourly hrv_sdnn sample found to re-POST");
     }
