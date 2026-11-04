@@ -13,6 +13,11 @@ export interface HealthSampleLike {
   value: number | null;
   start_at: string;
   source?: string;
+  /** "hourly" rows (granularity wave) are sub-day points: they feed the
+   *  Day-view charts only and must never enter daily derivation — an
+   *  hourly SDNN at 23:00 is not the day's rollup, and hourly step counts
+   *  would double the daily total this function sums. */
+  granularity?: string;
 }
 
 /** HRV SDNN lands under the canonical type plus two lane-specific variants. */
@@ -58,6 +63,7 @@ export function healthDays(
   const latestByType = new Map<string, HealthSampleLike>(); // `${date}|${type}` -> latest row
   for (const s of samples) {
     if (s.value === null) continue;
+    if (s.granularity === "hourly") continue;
     const date = String(s.start_at).slice(0, 10);
     if (HRV_SDNN_TYPES.includes(s.type)) {
       const key = `${date}|${s.type}`;

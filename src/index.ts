@@ -38,7 +38,7 @@ import {
   type MeasurementLike,
 } from "./insights";
 import { healthDays, type HealthDay } from "./healthdays";
-import { impactPage, scoreDetailPage } from "./views";
+import { impactPage, scoreDetailPage, workoutPage } from "./views";
 import {
   parseExportXml,
   parseHealthAutoExport,
@@ -47,11 +47,23 @@ import {
 } from "./import";
 import {
   decryptToken,
+  downsampleStream,
   encryptToken,
+  parseStreamPairs,
   stravaActivitySample,
   stravaAuthorizeUrl,
   stravaConfigured,
 } from "./strava";
+import { lineChart, stageBar, type ChartPoint } from "./chart";
+import {
+  baselineMedian,
+  dailyPoints,
+  dayFull,
+  dayLabel,
+  hourlyPoints,
+  seriesCaption,
+  type SeriesRow,
+} from "./series";
 import { summarizeSleep } from "./sleep";
 import { bloodPressureReadings, categoryDefs, summarizeCategories } from "./categories";
 import { buildLabDays, correlationPairs, generateInsights, labSeriesLabel } from "./lab";
@@ -152,14 +164,31 @@ async function first(db: D1Database, sql: string, ...bind: unknown[]): Promise<R
 /** Per-day inputs from the imported health_samples store (Apple Health
  *  daily aggregates) — the gauge path for every day without a real RR
  *  measurement. SPEC.md "Aggregate score mappings". */
+/** Parse a row's meta_json once and return its granularity flag, if any. */
+function rowGranularity(metaJson: unknown): string | undefined {
+  if (typeof metaJson !== "string" || !metaJson) return undefined;
+  try {
+    const m = JSON.parse(metaJson) as Record<string, unknown>;
+    return typeof m.granularity === "string" ? m.granularity : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 async function healthDayInputs(db: D1Database): Promise<HealthDay[]> {
   const samples = await all(
     db,
-    "SELECT type, value, unit, start_at, end_at, source FROM health_samples ORDER BY start_at ASC LIMIT 10000",
+    "SELECT type, value, unit, start_at, end_at, source, meta_json FROM health_samples ORDER BY start_at ASC LIMIT 10000",
   );
   const sleepRows = await all(db, "SELECT end_at, duration_s FROM sleep LIMIT 500");
   return healthDays(
-    samples as unknown as Array<{ type: string; value: number | null; start_at: string; source?: string }>,
+    (samples as Array<Record<string, unknown>>).map((s) => ({
+      type: String(s.type),
+      value: s.value === null ? null : Number(s.value),
+      start_at: String(s.start_at),
+      source: typeof s.source === "string" ? s.source : undefined,
+      granularity: rowGranularity(s.meta_json),
+    })),
     sleepRows as unknown as Array<{ end_at: string; duration_s: number }>,
   );
 }
@@ -194,7 +223,11 @@ async function todayData(db: D1Database): Promise<TodayData> {
       : null;
   // Rule-based insights (D5) over the same stored data the Lab uses.
   const sleepRows = await all(db, "SELECT end_at, duration_s FROM sleep LIMIT 500");
-  const stepRows = await all(db, "SELECT type, value, start_at FROM health_samples WHERE type = 'step_count' LIMIT 2000");
+  const stepRowsRaw = await all(db, "SELECT type, value, start_at, meta_json FROM health_samples WHERE type = 'step_count' LIMIT 2000");
+  // Hourly step buckets must not double the daily totals the Lab sums.
+  const stepRows = (stepRowsRaw as Array<Record<string, unknown>>)
+    .filter((r) => rowGranularity(r.meta_json) !== "hourly")
+    .map((r) => ({ type: String(r.type), value: r.value === null ? null : Number(r.value), start_at: String(r.start_at) }));
   const journalRows = await all(db, "SELECT created_at, mood, tags_json FROM journal LIMIT 500");
   const breathingRows = await all(db, "SELECT taken_at FROM breathing_sessions LIMIT 500");
   const days = buildLabDays(
@@ -245,15 +278,20 @@ app.get("/measure", (c) => c.html(measurePage(c.env.GIT_SHA ?? "")));
 app.get("/journal", (c) => c.html(journalPage(c.env.GIT_SHA ?? "")));
 app.get("/mydata", (c) => c.html(myDataPage(c.env.GIT_SHA ?? "")));
 app.get("/more", (c) => c.html(morePage(c.env.GIT_SHA ?? "")));
-app.get("/battery", (c) => c.html(scoreDetailPage("battery", c.env.GIT_SHA ?? "")));
-app.get("/stress", (c) => c.html(scoreDetailPage("stress", c.env.GIT_SHA ?? "")));
-app.get("/pressure", (c) => c.html(scoreDetailPage("pressure", c.env.GIT_SHA ?? "")));
+app.get("/battery", async (c) => c.html(scoreDetailPage("battery", c.env.GIT_SHA ?? "", await gaugeChartVm(c.env.DB, "battery", normRange(c.req.query("range"))))));
+app.get("/stress", async (c) => c.html(scoreDetailPage("stress", c.env.GIT_SHA ?? "", await gaugeChartVm(c.env.DB, "stress", normRange(c.req.query("range"))))));
+app.get("/pressure", async (c) => c.html(scoreDetailPage("pressure", c.env.GIT_SHA ?? "", await gaugeChartVm(c.env.DB, "pressure", normRange(c.req.query("range"))))));
 app.get("/impact", (c) => c.html(impactPage(c.env.GIT_SHA ?? "")));
-app.get("/sleep", (c) => c.html(sleepPage(c.env.GIT_SHA ?? "")));
-app.get("/mydata/:category", (c) => {
+app.get("/sleep", async (c) => c.html(sleepPage(c.env.GIT_SHA ?? "", await sleepChartVm(c.env.DB))));
+app.get("/workout/:id", async (c) => {
+  const vm = await workoutVm(c.env.DB, c.env.OWNER_EMAIL, Number(c.req.param("id")));
+  if (!vm) return c.html(layout("", "Not found", `<div class="card"><h2>Workout not found</h2><p><a href="/mydata/activity"><button>Back to Activity</button></a></p></div>`, c.env.GIT_SHA ?? ""), 404);
+  return c.html(workoutPage(vm, c.env.GIT_SHA ?? ""));
+});
+app.get("/mydata/:category", async (c) => {
   const def = categoryDefs().find((d) => d.key === c.req.param("category"));
   if (!def) return c.html(layout("", "Not found", `<div class="card"><h2>Unknown category</h2><p><a href="/mydata"><button>Back to My Data</button></a></p></div>`, c.env.GIT_SHA ?? ""), 404);
-  return c.html(categoryPage(def.key, def.title, c.env.GIT_SHA ?? ""));
+  return c.html(categoryPage(def.key, def.title, c.env.GIT_SHA ?? "", await categoryChartVm(c.env.DB, def.key, normRange(c.req.query("range")))));
 });
 app.get("/lab", (c) => c.html(labPage(c.env.GIT_SHA ?? "")));
 app.get("/coach", (c) => c.html(coachPage(c.env.GIT_SHA ?? "")));
@@ -626,8 +664,20 @@ app.get("/api/sleep", async (c) => {
 });
 
 app.get("/api/mydata/categories", async (c) => {
-  const samples = await all(c.env.DB, "SELECT type, value, unit, start_at, source FROM health_samples ORDER BY start_at DESC LIMIT 10000");
-  const typed = samples as unknown as Array<{ type: string; value: number | null; unit: string; start_at: string; source: string }>;
+  const samples = await all(
+    c.env.DB,
+    "SELECT id, type, value, unit, start_at, source, external_id, meta_json FROM health_samples ORDER BY start_at DESC LIMIT 10000",
+  );
+  const typed = (samples as Array<Record<string, unknown>>).map((s) => ({
+    id: Number(s.id),
+    type: String(s.type),
+    value: s.value === null ? null : Number(s.value),
+    unit: String(s.unit),
+    start_at: String(s.start_at),
+    source: String(s.source),
+    external_id: (s.external_id as string | null) ?? null,
+    granularity: rowGranularity(s.meta_json),
+  }));
   return c.json({
     ok: true,
     categories: summarizeCategories(typed, new Date().toISOString()),
@@ -636,13 +686,369 @@ app.get("/api/mydata/categories", async (c) => {
   });
 });
 
+// --------------------------------------- granularity wave: chart view-models
+// Every detail page renders its charts SERVER-side with the shared chart
+// component (src/chart.ts): labeled axes, zone bands, crosshair enhancer,
+// data-table toggle, and a computed insight caption. Ranges switch via
+// ?range=day|week|month|year full-page navigation (segmented links).
+
+const RANGE_DAYS: Record<string, number> = { week: 7, month: 30, year: 365 };
+
+function normRange(raw: string | undefined): "day" | "week" | "month" | "year" {
+  return raw === "day" || raw === "week" || raw === "year" ? raw : "month";
+}
+
+const shiftDate = (d: string, n: number): string =>
+  new Date(Date.parse(`${d}T12:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
+
+async function seriesRows(db: D1Database, type: string): Promise<SeriesRow[]> {
+  const rows = await all(
+    db,
+    "SELECT type, value, unit, start_at, meta_json FROM health_samples WHERE type = ? ORDER BY start_at ASC LIMIT 20000",
+    type,
+  );
+  return (rows as Array<Record<string, unknown>>).map((r) => ({
+    type: String(r.type),
+    value: r.value === null ? null : Number(r.value),
+    unit: String(r.unit),
+    start_at: String(r.start_at),
+    granularity: rowGranularity(r.meta_json),
+  }));
+}
+
+const METRIC_STYLE: Record<string, { color: string; unit: string; decimals: number }> = {
+  hrv_sdnn: { color: "#ff3b30", unit: "ms", decimals: 0 },
+  resting_heart_rate: { color: "#ff2d55", unit: "bpm", decimals: 0 },
+  heart_rate: { color: "#ff2d55", unit: "bpm", decimals: 0 },
+  oxygen_saturation: { color: "#32ade6", unit: "%", decimals: 0 },
+  respiratory_rate: { color: "#32ade6", unit: "br/min", decimals: 0 },
+  step_count: { color: "#34c759", unit: "steps", decimals: 0 },
+  active_energy: { color: "#ff9500", unit: "kcal", decimals: 0 },
+  basal_energy: { color: "#ffcc00", unit: "kcal", decimals: 0 },
+  distance_walking_running: { color: "#30d158", unit: "m", decimals: 0 },
+  workout: { color: "#af52de", unit: "min", decimals: 0 },
+  sleep_analysis: { color: "#5856d6", unit: "h", decimals: 1 },
+  mindful_session: { color: "#af52de", unit: "min", decimals: 0 },
+  body_mass: { color: "#8e8e93", unit: "kg", decimals: 1 },
+  blood_pressure_systolic: { color: "#ff2d55", unit: "mmHg", decimals: 0 },
+  blood_pressure_diastolic: { color: "#ff2d55", unit: "mmHg", decimals: 0 },
+};
+
+interface MetricChart {
+  html: string;
+  caption: string;
+  grain: "hourly" | "daily" | "none";
+  dateRef: string;
+  points: ChartPoint[];
+}
+
+/** One metric's chart + caption at a range. Day prefers the hourly grain
+ *  (latest day that has hourly points); when a metric has no hourly data
+ *  the chart honestly falls back to the daily series and says so via
+ *  `grain`. */
+function metricChart(
+  rows: SeriesRow[],
+  label: string,
+  style: { color: string; unit: string; decimals: number },
+  range: "day" | "week" | "month" | "year",
+): MetricChart {
+  const hourlyDates = [
+    ...new Set(rows.filter((r) => r.granularity === "hourly" && r.value !== null).map((r) => String(r.start_at).slice(0, 10))),
+  ].sort();
+  const dailyDates = [
+    ...new Set(rows.filter((r) => r.granularity !== "hourly" && r.value !== null).map((r) => String(r.start_at).slice(0, 10))),
+  ].sort();
+  let pts: ChartPoint[] = [];
+  let grain: MetricChart["grain"] = "none";
+  let dateRef = "";
+  let baseline: number | null = null;
+  if (range === "day" && hourlyDates.length) {
+    dateRef = hourlyDates[hourlyDates.length - 1];
+    pts = hourlyPoints(rows, dateRef);
+    if (pts.length) {
+      grain = "hourly";
+      baseline = baselineMedian(rows, dateRef);
+    }
+  }
+  if (!pts.length && dailyDates.length) {
+    const end = dailyDates[dailyDates.length - 1];
+    const days = range === "day" ? 7 : RANGE_DAYS[range];
+    pts = dailyPoints(rows, end, days);
+    if (pts.length) {
+      grain = "daily";
+      dateRef = end;
+      baseline = baselineMedian(rows, shiftDate(end, -(days - 1)));
+    }
+  }
+  const cap = seriesCaption(pts, style.unit, style.decimals, baseline);
+  const display = pts.map((p) => ({ ...p, full: `${p.full}${style.unit ? ` ${style.unit}` : ""}` }));
+  const html = lineChart({
+    id: `m-${rows[0]?.type ?? "metric"}`,
+    points: display,
+    unit: style.unit,
+    color: style.color,
+    yLabel: style.unit ? `${label} (${style.unit})` : label,
+    decimals: style.decimals,
+  });
+  return { html, caption: cap?.text ?? "", grain, dateRef, points: pts };
+}
+
+async function gaugeChartVm(db: D1Database, kind: "battery" | "stress" | "pressure", range: "day" | "week" | "month" | "year") {
+  const titles = { battery: "Battery", stress: "Stress", pressure: "Pressure" } as const;
+  const colors = { battery: "#34c759", stress: "#ff2d55", pressure: "#ff9500" } as const;
+  const unit = kind === "pressure" ? "" : "%";
+  if (range === "day") {
+    // Gauges are daily constructs — no hourly Battery/Stress/Pressure
+    // exists. The Day view shows the hourly heart-rate context chart and
+    // labels exactly why (never a fake hourly gauge).
+    const hrRows = await seriesRows(db, "heart_rate");
+    const mc = metricChart(hrRows, "Heart rate", METRIC_STYLE.heart_rate, "day");
+    const note = mc.grain === "hourly"
+      ? `${titles[kind]} is computed once per day from the day's data — there is no hourly ${titles[kind]} to chart. This is your hourly heart rate for ${dayFull(mc.dateRef)}, the closest hourly signal behind it.`
+      : `${titles[kind]} is computed once per day — there is no hourly ${titles[kind]} to chart, and no hourly heart-rate data is stored yet (it arrives with the Apple Health sync's hourly buckets).`;
+    return { range, chartHtml: mc.html, caption: mc.caption, note };
+  }
+  const rows = (await all(
+    db,
+    "SELECT taken_at, rmssd_ms, baevsky_si, lf_hf_ratio, source FROM measurements ORDER BY taken_at ASC LIMIT 1000",
+  )) as unknown as MeasurementLike[];
+  const hDays = await healthDayInputs(db);
+  const gaugeDays = mergeGaugeDays(measurementGaugeDays(rows), scoreHealthDays(hDays));
+  const days = RANGE_DAYS[range];
+  const win = gaugeDays.slice(-days);
+  const pts: ChartPoint[] = win.map((g) => ({
+    v: Math.round(g[kind] * 10) / 10,
+    label: dayLabel(g.date),
+    full: `${dayFull(g.date)} · ${Math.round(g[kind] * 10) / 10}`,
+  }));
+  const prior = gaugeDays.slice(0, Math.max(0, gaugeDays.length - days)).slice(-60).map((g) => g[kind]).sort((a, b) => a - b);
+  const baseline = prior.length ? prior[Math.floor(prior.length / 2)] : null;
+  const cap = seriesCaption(pts, unit, 0, baseline);
+  const display = pts.map((p) => ({ ...p, full: `${p.full}${unit ? ` ${unit}` : ""}` }));
+  const html = lineChart({
+    id: `g-${kind}`,
+    points: display,
+    unit,
+    color: colors[kind],
+    yLabel: `${titles[kind]} (${unit || "score"})`,
+    decimals: 0,
+  });
+  return { range, chartHtml: html, caption: cap?.text ?? "" };
+}
+
+async function categoryChartVm(db: D1Database, key: string, range: "day" | "week" | "month" | "year") {
+  const samples = await all(
+    db,
+    "SELECT id, type, value, unit, start_at, source, external_id, meta_json FROM health_samples ORDER BY start_at DESC LIMIT 10000",
+  );
+  const typed = (samples as Array<Record<string, unknown>>).map((s) => ({
+    id: Number(s.id),
+    type: String(s.type),
+    value: s.value === null ? null : Number(s.value),
+    unit: String(s.unit),
+    start_at: String(s.start_at),
+    source: String(s.source),
+    external_id: (s.external_id as string | null) ?? null,
+    granularity: rowGranularity(s.meta_json),
+  }));
+  const cat = summarizeCategories(typed, new Date().toISOString()).find((x) => x.key === key);
+  if (!cat) return { range, chartHtml: `<p class="sub">Unknown category.</p>`, caption: "" };
+  const parts: string[] = [];
+  for (const m of cat.metrics) {
+    const style = METRIC_STYLE[m.type] ?? { color: "#0071e3", unit: "", decimals: 1 };
+    const rows = typed.filter((t) => t.type === m.type) as unknown as SeriesRow[];
+    const mc = metricChart(rows, m.label, style, range);
+    const grainNote =
+      mc.grain === "hourly"
+        ? `Hourly · ${dayFull(mc.dateRef)} · ${m.hourlyCount} hourly points stored`
+        : mc.grain === "daily"
+          ? range === "day"
+            ? `Daily values — no hourly data for this metric yet`
+            : `Daily values · ${m.count} records`
+          : `No data yet`;
+    parts.push(`<h3 style="margin:14px 0 2px">${m.label}</h3><p class="sub" style="margin:0">${grainNote}</p>${mc.html}${mc.caption ? `<p class="msg">${mc.caption}</p>` : ""}`);
+  }
+  return { range, chartHtml: parts.join(""), caption: "" };
+}
+
+async function sleepChartVm(db: D1Database) {
+  const rows = await all(db, "SELECT id, start_at, end_at, duration_s, source, stages_json FROM sleep ORDER BY end_at DESC LIMIT 120");
+  const stageSamples = await all(
+    db,
+    "SELECT start_at, value, unit, meta_json FROM health_samples WHERE type = ? ORDER BY start_at DESC LIMIT 2000",
+    "sleep_analysis",
+  );
+  const summary = summarizeSleep(
+    rows as unknown as Array<{ start_at: string; end_at: string; duration_s: number; source: string; stages_json?: string }>,
+    8,
+    stageSamples as unknown as Array<{ start_at: string; value: number | null; unit: string; meta_json?: string }>,
+  );
+  const asc = [...summary.nights].reverse();
+  const win = asc.slice(-30);
+  const pts: ChartPoint[] = win.map((n) => ({
+    v: n.hours,
+    label: dayLabel(n.date),
+    full: `${dayFull(n.date)} · ${n.hours.toFixed(1)} h`,
+  }));
+  const prior = asc.slice(0, Math.max(0, asc.length - win.length)).map((n) => n.hours).sort((a, b) => a - b);
+  const baseline = prior.length ? prior[Math.floor(prior.length / 2)] : null;
+  const cap = seriesCaption(pts, "h", 1, baseline);
+  const chartHtml = lineChart({ id: "sleep-duration", points: pts, unit: "h", color: "#5856d6", yLabel: "Sleep (h)", decimals: 1 });
+  let stageHtml = "";
+  const last = summary.lastNight;
+  if (last && last.stages && Object.keys(last.stages).length) {
+    const norm = (k: string): string => {
+      const s = k.toLowerCase();
+      if (s.includes("unspecified")) return "unspecified";
+      if (s.includes("awake") || s === "wake") return "awake";
+      if (s.includes("inbed") || s.includes("in_bed")) return "inbed";
+      return s;
+    };
+    const segments = Object.entries(last.stages).map(([k, minutes]) => ({
+      stage: norm(k),
+      minutes: Number(minutes),
+    }));
+    stageHtml =
+      `<h2>Sleep stages · ${last.date}</h2>` +
+      stageBar(segments);
+  } else if (last) {
+    stageHtml = `<p class="sub">Stage detail: your Apple Health sync currently provides total sleep time per night — the connector store holds no stage intervals (deep / core / REM) for your nights, so there is no stage timeline to draw. When a source provides stage segments, they appear here.</p>`;
+  }
+  return { range: "month", chartHtml, caption: cap?.text ?? "", stageHtml };
+}
+
+const mmss = (t: number): string => {
+  const s = Math.max(0, Math.round(t));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const ss = s % 60;
+  return h > 0
+    ? `${h}:${String(m).padStart(2, "0")}:${String(ss).padStart(2, "0")}`
+    : `${m}:${String(ss).padStart(2, "0")}`;
+};
+
+async function workoutVm(db: D1Database, owner: string, id: number) {
+  const row = await first(db, "SELECT * FROM health_samples WHERE id = ?", id);
+  if (!row || String(row.type) !== "workout") return null;
+  let meta: Record<string, unknown> = {};
+  try {
+    meta = JSON.parse(String(row.meta_json ?? "{}")) as Record<string, unknown>;
+  } catch {
+    meta = {};
+  }
+  const num = (v: unknown): number | null => {
+    const n = Number(v);
+    return v !== undefined && v !== null && Number.isFinite(n) ? n : null;
+  };
+  const streamRow = await first(
+    db,
+    "SELECT points_json, point_count FROM workout_streams WHERE owner = ? AND sample_id = ?",
+    owner,
+    id,
+  );
+  let pairs: Array<[number, number]> = [];
+  if (streamRow) {
+    try {
+      const parsed = JSON.parse(String(streamRow.points_json)) as Array<[number, number]>;
+      if (Array.isArray(parsed)) pairs = parsed.filter((p) => Array.isArray(p) && p.length === 2);
+    } catch {
+      pairs = [];
+    }
+  }
+  const streamMax = pairs.length ? Math.max(...pairs.map((p) => p[1])) : null;
+  const streamAvg = pairs.length ? pairs.reduce((a, p) => a + p[1], 0) / pairs.length : null;
+  const maxHr = num(meta.max_hr_bpm) ?? num(meta.maxHeartRate) ?? streamMax;
+  const avgHr = num(meta.avg_hr_bpm) ?? num(meta.avgHeartRate) ?? (streamAvg !== null ? Math.round(streamAvg) : null);
+  const stats: Array<[string, string]> = [];
+  const durationS = num(meta.moving_time_s) ?? num(meta.elapsed_time_s) ?? (num(row.value) !== null ? Number(row.value) * 60 : null);
+  if (durationS !== null) stats.push(["Duration", mmss(durationS)]);
+  const distM = num(meta.distance_m) ?? num(meta.distance);
+  if (distM !== null) stats.push(["Distance", distM >= 1000 ? `${(distM / 1000).toFixed(2)} km` : `${Math.round(distM)} m`]);
+  if (avgHr !== null) stats.push(["Average HR", `${Math.round(avgHr)} bpm`]);
+  if (maxHr !== null) stats.push(["Max HR", `${Math.round(maxHr)} bpm`]);
+  const cal = num(meta.calories) ?? num(meta.kilocalories);
+  if (cal !== null) stats.push(["Calories", `${Math.round(cal)} kcal`]);
+  const elev = num(meta.total_elevation_gain);
+  if (elev !== null) stats.push(["Elevation gain", `${Math.round(elev)} m`]);
+  let chartHtml = "";
+  let caption = "";
+  if (pairs.length && maxHr !== null) {
+    const zoneDefs = [
+      { vFrom: 0, vTo: 0.6, color: "#64d2ff", label: "Z1 Recovery" },
+      { vFrom: 0.6, vTo: 0.7, color: "#30d158", label: "Z2 Endurance" },
+      { vFrom: 0.7, vTo: 0.8, color: "#ffd60a", label: "Z3 Tempo" },
+      { vFrom: 0.8, vTo: 0.9, color: "#ff9f0a", label: "Z4 Threshold" },
+      { vFrom: 0.9, vTo: 1.1, color: "#ff453a", label: "Z5 Peak" },
+    ];
+    const zones = zoneDefs.map((z) => ({ vFrom: Math.round(maxHr * z.vFrom), vTo: Math.round(maxHr * z.vTo), color: z.color, label: z.label }));
+    const pts: ChartPoint[] = pairs.map(([t, hr]) => ({
+      v: hr,
+      label: mmss(t),
+      full: `${mmss(t)} elapsed · ${hr} bpm`,
+    }));
+    chartHtml = lineChart({ id: "workout-hr", points: pts, unit: "bpm", color: "#ff2d55", yLabel: "Heart rate (bpm)", decimals: 0, zones });
+    // Time-in-zone from consecutive-point gaps.
+    const zoneSecs = zoneDefs.map(() => 0);
+    for (let i = 0; i < pairs.length; i++) {
+      const gap = i + 1 < pairs.length ? Math.min(30, pairs[i + 1][0] - pairs[i][0]) : 0;
+      const f = pairs[i][1] / maxHr;
+      const zi = f < 0.6 ? 0 : f < 0.7 ? 1 : f < 0.8 ? 2 : f < 0.9 ? 3 : 4;
+      zoneSecs[zi] += Math.max(0, gap);
+    }
+    const totalS = zoneSecs.reduce((a, b) => a + b, 0) || 1;
+    const zoneText = zoneDefs
+      .map((z, i) => `${z.label.split(" ")[0]} ${Math.round((zoneSecs[i] / totalS) * 100)}%`)
+      .join(" · ");
+    caption = `HR stream · ${pairs.length} points at ~5 s spacing · avg ${avgHr !== null ? Math.round(avgHr) : "—"} bpm · max ${Math.round(maxHr)} bpm · zones from your observed max HR · time in zone: ${zoneText}`;
+  }
+  const dateStr = String(row.start_at).slice(0, 10);
+  return {
+    id,
+    name: typeof meta.name === "string" && meta.name ? meta.name : "Workout",
+    sport: typeof meta.sport === "string" ? meta.sport : typeof meta.type === "string" ? meta.type : "Workout",
+    whenLabel: `${dayFull(dateStr)} · ${String(row.start_at).slice(11, 16)}`,
+    source: String(row.source),
+    stats,
+    chartHtml,
+    caption,
+    hasStream: pairs.length > 0,
+  };
+}
+
+app.get("/api/series", async (c) => {
+  const type = c.req.query("type") ?? "";
+  if (!type) return c.json({ ok: false, error: "type required" }, 400);
+  const range = normRange(c.req.query("range"));
+  const rows = await seriesRows(c.env.DB, type);
+  const style = METRIC_STYLE[type] ?? { color: "#0071e3", unit: rows[0]?.unit ?? "", decimals: 1 };
+  const mc = metricChart(rows, type, style, range);
+  return c.json({ ok: true, type, range, grain: mc.grain, date: mc.dateRef, points: mc.points, caption: mc.caption });
+});
+
+app.get("/api/gauge-series", async (c) => {
+  const kind = c.req.query("kind");
+  if (kind !== "battery" && kind !== "stress" && kind !== "pressure") return c.json({ ok: false, error: "kind must be battery|stress|pressure" }, 400);
+  const range = normRange(c.req.query("range"));
+  const vm = await gaugeChartVm(c.env.DB, kind, range);
+  return c.json({ ok: true, kind, range, note: vm.note ?? null, caption: vm.caption });
+});
+
+app.get("/api/workouts/:id", async (c) => {
+  const vm = await workoutVm(c.env.DB, c.env.OWNER_EMAIL, Number(c.req.param("id")));
+  if (!vm) return c.json({ ok: false, error: "workout not found" }, 404);
+  return c.json({ ok: true, workout: vm });
+});
+
 async function labDays(db: D1Database) {
   const asc = (await all(
     db,
     "SELECT taken_at, rmssd_ms, baevsky_si, lf_hf_ratio, source FROM measurements ORDER BY taken_at ASC LIMIT 1000",
   )) as unknown as MeasurementLike[];
   const sleepRows = await all(db, "SELECT end_at, duration_s FROM sleep LIMIT 500");
-  const stepRows = await all(db, "SELECT type, value, start_at FROM health_samples WHERE type = 'step_count' LIMIT 2000");
+  const stepRowsRaw = await all(db, "SELECT type, value, start_at, meta_json FROM health_samples WHERE type = 'step_count' LIMIT 2000");
+  const stepRows = (stepRowsRaw as Array<Record<string, unknown>>)
+    .filter((r) => rowGranularity(r.meta_json) !== "hourly")
+    .map((r) => ({ type: String(r.type), value: r.value === null ? null : Number(r.value), start_at: String(r.start_at) }));
   const journalRows = await all(db, "SELECT created_at, mood, tags_json FROM journal LIMIT 500");
   return buildLabDays(
     asc,
@@ -1322,31 +1728,110 @@ app.get("/connect/strava/callback", async (c) => {
     .run();
   return c.redirect("/more?strava=connected");
 });
-app.post("/connect/strava/sync", async (c) => {
-  if (!stravaConfigured(c.env) || !c.env.TOKEN_ENC_KEY) return c.json({ ok: false, error: "strava not configured" }, 400);
-  const row = await first(c.env.DB, "SELECT * FROM strava_tokens WHERE owner = ?", c.env.OWNER_EMAIL);
-  if (!row) return c.json({ ok: false, error: "not connected" }, 400);
-  let access = await decryptToken(c.env, String(row.access_token_enc));
+/** Current Strava access token for the owner, refreshing (and persisting
+ *  the rotated pair) when the stored one is near expiry. Null when
+ *  Strava is not connected/configured. Shared by sync, streams, webhook. */
+async function stravaAccessToken(env: Env): Promise<string | null> {
+  if (!stravaConfigured(env) || !env.TOKEN_ENC_KEY) return null;
+  const row = await first(env.DB, "SELECT * FROM strava_tokens WHERE owner = ?", env.OWNER_EMAIL);
+  if (!row) return null;
+  let access = await decryptToken(env, String(row.access_token_enc));
   if (Number(row.expires_at) * 1000 < Date.now() + 60000) {
-    const refresh = await decryptToken(c.env, String(row.refresh_token_enc));
+    const refresh = await decryptToken(env, String(row.refresh_token_enc));
     const res = await fetch("https://www.strava.com/oauth/token", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ client_id: c.env.STRAVA_CLIENT_ID, client_secret: c.env.STRAVA_CLIENT_SECRET, refresh_token: refresh, grant_type: "refresh_token" }),
+      body: JSON.stringify({ client_id: env.STRAVA_CLIENT_ID, client_secret: env.STRAVA_CLIENT_SECRET, refresh_token: refresh, grant_type: "refresh_token" }),
     });
     const tok = (await res.json().catch(() => ({}))) as { access_token?: string; refresh_token?: string; expires_at?: number };
-    if (!res.ok || !tok.access_token || !tok.refresh_token) return c.json({ ok: false, error: "strava refresh failed" }, 502);
+    if (!res.ok || !tok.access_token || !tok.refresh_token) return null;
     access = tok.access_token;
-    await c.env.DB.prepare("UPDATE strava_tokens SET access_token_enc = ?, refresh_token_enc = ?, expires_at = ?, updated_at = datetime('now') WHERE owner = ?")
-      .bind(await encryptToken(c.env, tok.access_token), await encryptToken(c.env, tok.refresh_token), tok.expires_at ?? 0, c.env.OWNER_EMAIL)
+    await env.DB.prepare("UPDATE strava_tokens SET access_token_enc = ?, refresh_token_enc = ?, expires_at = ?, updated_at = datetime('now') WHERE owner = ?")
+      .bind(await encryptToken(env, tok.access_token), await encryptToken(env, tok.refresh_token), tok.expires_at ?? 0, env.OWNER_EMAIL)
       .run();
   }
+  return access;
+}
+
+/** Fetch one activity's heartrate+time stream and store it downsampled.
+ *  Returns "stored" | "no-hr" | "rate-limited" | "error". */
+async function fetchAndStoreStream(
+  env: Env,
+  access: string,
+  sampleId: number,
+  activityExternalId: string,
+): Promise<"stored" | "no-hr" | "rate-limited" | "error"> {
+  const activityId = activityExternalId.replace(/^strava-activity:/, "");
+  const res = await fetch(
+    `https://www.strava.com/api/v3/activities/${encodeURIComponent(activityId)}/streams?keys=time,heartrate&key_by_type=true`,
+    { headers: { authorization: `Bearer ${access}` } },
+  );
+  if (res.status === 429) return "rate-limited";
+  if (!res.ok) return "error";
+  const pairs = downsampleStream(parseStreamPairs(await res.json().catch(() => null)), 5);
+  if (!pairs.length) return "no-hr";
+  await env.DB.prepare(
+    "INSERT INTO workout_streams (owner, sample_id, activity_external_id, points_json, point_count, fetched_at) VALUES (?, ?, ?, ?, ?, datetime('now')) ON CONFLICT(owner, activity_external_id) DO UPDATE SET sample_id = excluded.sample_id, points_json = excluded.points_json, point_count = excluded.point_count, fetched_at = datetime('now')",
+  )
+    .bind(env.OWNER_EMAIL, sampleId, activityExternalId, JSON.stringify(pairs), pairs.length)
+    .run();
+  return "stored";
+}
+
+/** Backfill streams for stored Strava workouts that lack one (newest
+ *  first). Stops at the first 429 and reports partial progress. */
+async function syncStravaStreams(
+  env: Env,
+  limit = 25,
+): Promise<{ checked: number; stored: number; noHr: number; rateLimited: boolean }> {
+  const access = await stravaAccessToken(env);
+  const out = { checked: 0, stored: 0, noHr: 0, rateLimited: false };
+  if (!access) return out;
+  const rows = await all(
+    env.DB,
+    `SELECT hs.id AS sample_id, hs.external_id AS ext FROM health_samples hs
+     LEFT JOIN workout_streams ws ON ws.owner = hs.owner AND ws.activity_external_id = hs.external_id
+     WHERE hs.owner = ? AND hs.type = 'workout' AND hs.source = 'strava' AND hs.external_id IS NOT NULL AND ws.id IS NULL
+     ORDER BY hs.start_at DESC LIMIT ?`,
+    env.OWNER_EMAIL,
+    limit,
+  );
+  for (const r of rows as Array<Record<string, unknown>>) {
+    const status = await fetchAndStoreStream(env, access, Number(r.sample_id), String(r.ext));
+    out.checked++;
+    if (status === "stored") out.stored++;
+    else if (status === "no-hr") out.noHr++;
+    else if (status === "rate-limited") {
+      out.rateLimited = true;
+      break;
+    }
+  }
+  return out;
+}
+
+app.post("/connect/strava/sync", async (c) => {
+  if (!stravaConfigured(c.env) || !c.env.TOKEN_ENC_KEY) return c.json({ ok: false, error: "strava not configured" }, 400);
+  const access = await stravaAccessToken(c.env);
+  if (!access) return c.json({ ok: false, error: "not connected or refresh failed" }, 400);
   const res = await fetch("https://www.strava.com/api/v3/athlete/activities?per_page=50", { headers: { authorization: `Bearer ${access}` } });
   if (!res.ok) return c.json({ ok: false, error: `strava activities fetch failed: ${res.status}` }, 502);
   const acts = (await res.json()) as Array<Record<string, unknown>>;
   const samples = acts.map(stravaActivitySample) as unknown as NormalizedSample[];
   const inserted = await insertSamples(c.env.DB, c.env.OWNER_EMAIL, samples);
-  return c.json({ ok: true, fetched: acts.length, inserted });
+  // Granularity wave: also pull HR streams for workouts that lack one.
+  const streams = await syncStravaStreams(c.env, 25).catch(() => ({ checked: 0, stored: 0, noHr: 0, rateLimited: false }));
+  return c.json({ ok: true, fetched: acts.length, inserted, streams });
+});
+
+/** Tokened lane (same import-token trust as /api/watch/*): trigger a
+ *  Strava stream backfill from a trusted local script — used by the
+ *  granularity-wave verification and future maintenance. */
+app.post("/api/import/strava-streams", async (c) => {
+  if (!(await verifyImportToken(c))) return c.json({ ok: false, error: "import token required" }, 401);
+  const limit = Math.min(50, Math.max(1, Number(c.req.query("limit") ?? 25) || 25));
+  const streams = await syncStravaStreams(c.env, limit);
+  const total = await first(c.env.DB, "SELECT COUNT(*) AS n FROM workout_streams WHERE owner = ?", c.env.OWNER_EMAIL);
+  return c.json({ ok: true, streams, totalStreams: Number(total?.n ?? 0) });
 });
 app.get("/api/webhooks/strava", (c) => {
   const mode = c.req.query("hub.mode");
@@ -1362,9 +1847,21 @@ app.post("/api/webhooks/strava", async (c) => {
   await c.env.DB.prepare("INSERT INTO events (owner, kind, detail_json) VALUES (?, 'strava_webhook', ?)")
     .bind(c.env.OWNER_EMAIL, JSON.stringify(evt))
     .run();
-  // Pull happens on the next owner-initiated sync (or immediately when the
-  // connector is fully configured — the event is durably queued either way).
-  return c.json({ ok: true, queued: true });
+  // Granularity wave: on an activity create/update, fetch that activity's
+  // HR stream right away when the sample is already stored. Best-effort —
+  // the event stays durably queued either way, and the next sync backfills.
+  let stream: string | null = null;
+  if ((evt.aspect_type === "create" || evt.aspect_type === "update") && evt.object_type === "activity" && evt.object_id) {
+    try {
+      const ext = `strava-activity:${String(evt.object_id)}`;
+      const sample = await first(c.env.DB, "SELECT id FROM health_samples WHERE owner = ? AND external_id = ?", c.env.OWNER_EMAIL, ext);
+      const access = sample ? await stravaAccessToken(c.env) : null;
+      if (sample && access) stream = await fetchAndStoreStream(c.env, access, Number(sample.id), ext);
+    } catch {
+      stream = "error";
+    }
+  }
+  return c.json({ ok: true, queued: true, stream });
 });
 
 // Fallback shell for unknown paths (keeps PWA nav coherent).

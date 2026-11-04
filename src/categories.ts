@@ -11,12 +11,19 @@ export interface SampleRow {
   unit: string;
   start_at: string;
   source: string;
+  /** "hourly" = sub-day point (granularity wave). Headline stats are
+   *  computed from daily-grain rows only; hourly rows are counted
+   *  separately and feed the Day-view charts. */
+  granularity?: string;
+  id?: number;
+  external_id?: string | null;
 }
 
 export interface MetricSummary {
   type: string;
   label: string;
   count: number;
+  hourlyCount: number;
   latest: { value: number; unit: string; at: string; source: string } | null;
   avg7d: number | null;
   min: number | null;
@@ -96,8 +103,10 @@ export function summarizeCategories(samples: SampleRow[], nowIso: string): Categ
   const now = new Date(nowIso).getTime();
   return CATEGORY_DEFS.map((def) => {
     const metrics: MetricSummary[] = def.metrics.map((m) => {
-      const rows = samples
-        .filter((s) => s.type === m.type && s.value !== null)
+      const allRows = samples.filter((s) => s.type === m.type && s.value !== null);
+      const hourlyCount = allRows.filter((s) => s.granularity === "hourly").length;
+      const rows = allRows
+        .filter((s) => s.granularity !== "hourly")
         .sort((a, b) => (a.start_at < b.start_at ? 1 : -1));
       const vals = rows.map((r) => Number(r.value));
       const recent = rows.filter((r) => now - new Date(String(r.start_at).replace(" ", "T")).getTime() <= 7 * DAY_MS);
@@ -105,6 +114,7 @@ export function summarizeCategories(samples: SampleRow[], nowIso: string): Categ
         type: m.type,
         label: m.label,
         count: rows.length,
+        hourlyCount,
         latest: rows.length
           ? { value: Number(rows[0].value), unit: rows[0].unit, at: rows[0].start_at, source: rows[0].source }
           : null,

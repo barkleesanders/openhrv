@@ -1,5 +1,7 @@
 /** OpenHRV — server-rendered PWA views (original design, app-structure layout). */
 
+import { CHART_CSS, CHART_JS } from "./chart";
+
 export const ICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" rx="22" fill="#ffffff"/><path d="M10 54 H32 L40 32 L54 74 L64 46 H90" fill="none" stroke="#ff2d55" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 
 /** SF-symbol-style line icons (original inline SVG, stroke = currentColor). */
@@ -105,6 +107,8 @@ a{color:var(--acc)}
 .seg{display:flex;background:var(--line);border-radius:11px;padding:2px;gap:2px;margin:10px 0}
 .seg button{flex:1;background:transparent;color:var(--txt);border-radius:9px;padding:5px 0;min-height:30px;font-size:13px;font-weight:600}
 .seg button.on{background:var(--card);box-shadow:0 1px 3px rgba(0,0,0,.14)}
+.seg a{flex:1;text-align:center}
+${CHART_CSS}
 </style></head>
 <body>
 <header><h1>${title}</h1></header>
@@ -177,7 +181,8 @@ export function spark(points: number[] | undefined, color: string, id: string, w
     (p, i) => [(i / (points.length - 1)) * w, h - 4 - ((p - mn) / span) * (h - 8)] as const,
   );
   const line = pts.map((p, i) => `${i ? "L" : "M"}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(" ");
-  return `<svg class="spark" viewBox="0 0 ${w} ${h}" width="100%" height="${h}" preserveAspectRatio="none" aria-hidden="true"><defs><linearGradient id="sg${id}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${color}" stop-opacity=".28"/><stop offset="1" stop-color="${color}" stop-opacity="0"/></linearGradient></defs><path d="${line} L${w},${h} L0,${h} Z" fill="url(#sg${id})" stroke="none"/><path d="${line}" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+  const f1 = (v: number) => (Number.isInteger(v) ? String(v) : v.toFixed(1));
+  return `<span class="sparkwrap"><svg class="spark" viewBox="0 0 ${w} ${h}" width="100%" height="${h}" preserveAspectRatio="none" aria-hidden="true"><defs><linearGradient id="sg${id}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${color}" stop-opacity=".28"/><stop offset="1" stop-color="${color}" stop-opacity="0"/></linearGradient></defs><path d="${line} L${w},${h} L0,${h} Z" fill="url(#sg${id})" stroke="none"/><path d="${line}" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="sparkmax">${f1(mx)}</span><span class="sparkmin">${f1(mn)}</span></span>`;
 }
 
 export function todayPage(d: TodayData, sha = ""): string {
@@ -667,7 +672,24 @@ document.getElementById("deldata").addEventListener("click", function() {
   );
 }
 
-export function scoreDetailPage(kind: "battery" | "stress" | "pressure", sha = ""): string {
+export interface ChartPageVm {
+  range: string;
+  chartHtml: string;
+  caption: string;
+  note?: string;
+}
+
+const RANGE_LINKS = (base: string, range: string): string =>
+  `<div class="seg" role="group" aria-label="Chart range">` +
+  (["day", "week", "month", "year"] as const)
+    .map(
+      (r) =>
+        `<a href="${base}?range=${r}" class="${r === range ? "on" : ""}" aria-label="${r} view">${r === "day" ? "D" : r === "week" ? "W" : r === "month" ? "M" : "Y"}</a>`,
+    )
+    .join("") +
+  `</div>`;
+
+export function scoreDetailPage(kind: "battery" | "stress" | "pressure", sha = "", vm?: ChartPageVm): string {
   const titles = { battery: "Battery", stress: "Stress", pressure: "Pressure" } as const;
   const subs = {
     battery: "Your charge — how recovered you are, and what is draining or recharging it.",
@@ -675,6 +697,7 @@ export function scoreDetailPage(kind: "battery" | "stress" | "pressure", sha = "
     pressure: "Load / pressure — trend and the contributors behind today's number.",
   } as const;
   const colors = { battery: "#34c759", stress: "#ff2d55", pressure: "#ff9500" } as const;
+  const range = vm?.range ?? "month";
   return layout(
     "today",
     titles[kind],
@@ -682,37 +705,13 @@ export function scoreDetailPage(kind: "battery" | "stress" | "pressure", sha = "
      <div class="gauge" id="gauge" style="font-size:48px;color:${colors[kind]}">—</div>
      <div class="sub" id="state">${subs[kind]}</div></div>
      <div class="card"><h2>Trend</h2>
-     <div class="seg" role="group" aria-label="Trend range"><button data-r="1">D</button><button data-r="7">W</button><button data-r="14" class="on">M</button><button data-r="10000">Y</button></div>
-     <canvas id="trend" width="700" height="140"></canvas><p class="msg" id="tmsg"></p></div>
+     ${RANGE_LINKS(`/${kind}`, range)}
+     ${vm?.note ? `<p class="sub">${vm.note}</p>` : ""}
+     ${vm?.chartHtml ?? `<p class="sub" id="tmsg">Trend appears after a few days of data.</p>`}
+     ${vm?.caption ? `<p class="msg" id="tmsg">${vm.caption}</p>` : `<p class="msg" id="tmsg"></p>`}</div>
      <div class="card"><h2 id="drivers-title">${kind === "battery" ? "Draining / recharging" : "What drives it"}</h2><div id="drivers"><p class="sub">Loading…</p></div></div>
      <p><a href="/"><button class="ghost">← Back to Today</button></a></p>
 <script>
-var TREND = [], RANGE = 14, COLOR = "${colors[kind]}";
-function drawTrend() {
-  var pts = TREND.slice(-RANGE);
-  var c = document.getElementById("trend"), x = c.getContext("2d");
-  x.clearRect(0, 0, c.width, c.height);
-  if (!pts.length) return;
-  if (pts.length === 1) {
-    document.getElementById("tmsg").textContent = pts[0].at.slice(0, 10) + " · " + Math.round(pts[0].value) + ("${kind}" === "pressure" ? "" : "%");
-    x.fillStyle = COLOR; x.beginPath(); x.arc(c.width / 2, c.height / 2, 5, 0, 7); x.fill();
-    return;
-  }
-  document.getElementById("tmsg").textContent = pts[0].at.slice(0, 10) + " – " + pts[pts.length - 1].at.slice(0, 10);
-  x.beginPath();
-  pts.forEach(function(p, i){ var px = i / (pts.length - 1) * c.width, py = c.height - p.value / 100 * (c.height - 10) - 5; i ? x.lineTo(px, py) : x.moveTo(px, py); });
-  x.strokeStyle = COLOR; x.lineWidth = 2; x.stroke();
-  x.lineTo(c.width, c.height); x.lineTo(0, c.height); x.closePath();
-  x.globalAlpha = 0.13; x.fillStyle = COLOR; x.fill(); x.globalAlpha = 1;
-}
-document.querySelectorAll(".seg button").forEach(function(b) {
-  b.addEventListener("click", function() {
-    document.querySelectorAll(".seg button").forEach(function(o){ o.classList.remove("on"); });
-    b.classList.add("on");
-    RANGE = Number(b.getAttribute("data-r"));
-    drawTrend();
-  });
-});
 fetch("/api/scores").then(function(r){return r.json();}).then(function(j) {
   var s = j["${kind}"];
   var driversEl = document.getElementById("drivers");
@@ -723,20 +722,16 @@ fetch("/api/scores").then(function(r){return r.json();}).then(function(j) {
   }
   if (!s || s.value === null) {
     document.getElementById("state").textContent = "No data yet — take a measurement or sync Apple Health to compute this score.";
-    document.getElementById("tmsg").textContent = "Trend appears after a few days of data.";
     if (!s || !s.contributors || !s.contributors.length) driversEl.innerHTML = "<p class='sub'>No data — take a measurement first.</p>";
     return;
   }
   document.getElementById("gauge").textContent = Math.round(s.value) + ("${kind}" === "pressure" ? "" : "%");
   document.getElementById("state").textContent = s.state + " · updated " + String(s.at).slice(0,16).replace("T"," ") + (s.source === "health" ? " · from Apple Health daily data" : "");
-  TREND = s.trend || [];
-  if (TREND.length > 1) drawTrend();
-  else document.getElementById("tmsg").textContent = "Trend appears after a few days of data.";
 }).catch(function() {
   document.getElementById("drivers").innerHTML = "<p class='sub'>Could not load — reload to try again.</p>";
-  document.getElementById("tmsg").textContent = "Trend unavailable.";
 });
-</script>`,
+</script>
+<script>${CHART_JS}</script>`,
     sha,
   );
 }
@@ -812,15 +807,17 @@ self.addEventListener("notificationclick", (e) => { e.notification.close(); e.wa
 }
 
 
-export function sleepPage(sha = ""): string {
+export function sleepPage(sha = "", vm?: ChartPageVm & { stageHtml?: string }): string {
   return layout(
     "mydata",
     "Sleep",
     `<div class="card"><div class="glabel" style="color:var(--sleep)">Last night</div>
      <div class="gauge" id="last" style="font-size:44px;color:var(--sleep)">—</div>
      <div class="sub" id="lastsub">Loading…</div>
-     <div id="stages"></div></div>
-     <div class="card"><h2>Trend · last 14 nights</h2><canvas id="trend" width="700" height="140"></canvas><p class="msg" id="tmsg"></p></div>
+     <div id="stages">${vm?.stageHtml ?? ""}</div></div>
+     <div class="card"><h2>Duration trend · last 30 nights</h2>
+     ${vm?.chartHtml ?? `<p class="sub">Trend appears after a few recorded nights.</p>`}
+     ${vm?.caption ? `<p class="msg">${vm.caption}</p>` : ""}</div>
      <div class="card"><h2>All nights</h2><div id="nights"><p class="sub">Loading…</p></div></div>
      <p><a href="/mydata"><button class="ghost">← Back to My Data</button></a></p>
 <script>
@@ -830,36 +827,25 @@ fetch("/api/sleep").then(function(r){return r.json();}).then(function(j) {
   var ln = s.lastNight;
   document.getElementById("last").textContent = ln.hours.toFixed(1) + " h";
   document.getElementById("lastsub").textContent = ln.date + " · debt " + ln.debtH.toFixed(1) + " h vs your " + s.targetH + " h target" + (ln.vsMedianPct !== null ? " · " + (ln.vsMedianPct >= 0 ? "+" : "") + ln.vsMedianPct + "% vs your median (" + s.medianHours + " h)" : "") + " · 7-night debt " + s.debt7dH + " h";
-  if (ln.stages) {
-    document.getElementById("stages").innerHTML = "<h2>Sleep stages</h2>" + Object.keys(ln.stages).map(function(k) {
-      return "<div class='stat'><span>" + k + "</span><b>" + ln.stages[k] + " min</b></div>";
-    }).join("");
-  } else {
-    document.getElementById("stages").innerHTML = "<p class='sub'>Stage detail appears when your import source provides stage segments (Health Auto Export does).</p>";
-  }
   document.getElementById("nights").innerHTML = s.nights.map(function(n) {
     return "<div class='stat'><span>" + n.date + " · " + String(n.start_at).slice(11, 16) + "–" + String(n.end_at).slice(11, 16) + " · " + n.source + "</span><b>" + n.hours.toFixed(1) + " h</b></div>";
   }).join("");
-  var pts = s.nights.slice(0, 14).reverse();
-  if (pts.length > 1) {
-    var c = document.getElementById("trend"), x = c.getContext("2d");
-    x.strokeStyle = "#5856d6"; x.lineWidth = 2; x.beginPath();
-    pts.forEach(function(n, i) { var px = i / (pts.length - 1) * c.width, py = c.height - Math.min(12, n.hours) / 12 * (c.height - 10) - 5; i ? x.lineTo(px, py) : x.moveTo(px, py); });
-    x.stroke();
-    x.strokeStyle = "#8e8e93"; x.setLineDash([4, 4]); x.beginPath();
-    var ty = c.height - s.targetH / 12 * (c.height - 10) - 5; x.moveTo(0, ty); x.lineTo(c.width, ty); x.stroke();
-  } else document.getElementById("tmsg").textContent = "Trend appears after a few recorded nights.";
 });
-</script>`,
+</script>
+<script>${CHART_JS}</script>`,
     sha,
   );
 }
 
-export function categoryPage(key: string, title: string, sha = ""): string {
+export function categoryPage(key: string, title: string, sha = "", vm?: ChartPageVm): string {
   return layout(
     "mydata",
     title,
     `<div class="card"><h2>${title}</h2><p class="sub" id="blurb">Loading…</p><div id="metrics"></div></div>
+     <div class="card"><h2>Charts</h2>
+     ${RANGE_LINKS(`/mydata/${key}`, vm?.range ?? "month")}
+     ${vm?.note ? `<p class="sub">${vm.note}</p>` : ""}
+     ${vm?.chartHtml ?? `<p class="sub">Charts appear as data arrives.</p>`}</div>
      <div class="card" id="bppair" style="display:none"><h2>Paired readings</h2><div id="bp"></div></div>
      <div class="card"><h2>Recent samples</h2><div id="recent"><p class="sub">Loading…</p></div></div>
      <p><a href="/mydata"><button class="ghost">← Back to My Data</button></a></p>
@@ -883,10 +869,13 @@ fetch("/api/mydata/categories").then(function(r){return r.json();}).then(functio
   var types = cat.metrics.map(function(m){ return m.type; });
   var rec = (j.recentSamples || []).filter(function(s){ return types.indexOf(s.type) >= 0; }).slice(0, 25);
   document.getElementById("recent").innerHTML = rec.length ? rec.map(function(s) {
-    return "<div class='stat'><span>" + String(s.start_at).slice(0, 16).replace("T", " ") + " · " + s.type + "</span><b>" + (s.value === null ? "" : Number(s.value).toFixed(1) + " " + s.unit) + " · " + s.source + "</b></div>";
+    var main = "<div class='stat'><span>" + String(s.start_at).slice(0, 16).replace("T", " ") + " · " + s.type + "</span><b>" + (s.value === null ? "" : Number(s.value).toFixed(1) + " " + s.unit) + " · " + s.source + "</b></div>";
+    if (s.type === "workout" && s.id) return "<a href='/workout/" + s.id + "' style='text-decoration:none;color:inherit'>" + main + "</a>";
+    return main;
   }).join("") : "<p class='sub'>No samples in this category yet — they arrive via Apple Health import or Strava.</p>";
 });
-</script>`,
+</script>
+<script>${CHART_JS}</script>`,
     sha,
   );
 }
@@ -1239,6 +1228,39 @@ document.getElementById("fbsend").addEventListener("click", function() {
     .then(function(r){ return r.json(); }).then(function(j) { m.textContent = j.ok ? "Thanks — saved to the event log." : (j.error || "failed"); document.getElementById("fb").value = ""; });
 });
 </script>`,
+    sha,
+  );
+}
+
+export interface WorkoutVm {
+  id: number;
+  name: string;
+  sport: string;
+  whenLabel: string;
+  source: string;
+  stats: Array<[string, string]>;
+  chartHtml: string;
+  caption: string;
+  hasStream: boolean;
+}
+
+/** Workout detail (granularity wave): summary stats + the real Strava HR
+ *  stream chart with labeled zone bands, or an honest "no stream yet". */
+export function workoutPage(w: WorkoutVm, sha = ""): string {
+  const stats = w.stats
+    .map(([k, v]) => `<div class="stat"><span>${k}</span><b>${v}</b></div>`)
+    .join("");
+  return layout(
+    "mydata",
+    w.name,
+    `<div class="card"><div class="glabel" style="color:#af52de">${w.sport || "Workout"}</div>
+     <div class="sub">${w.whenLabel} · ${w.source}</div>
+     ${stats}</div>
+     <div class="card"><h2>Heart rate</h2>
+     ${w.hasStream ? w.chartHtml : `<p class="sub">No heart-rate stream stored for this workout yet. Streams are fetched from Strava during sync — open More → Connectors, or wait for the next Strava sync, and this chart fills in. Nothing is estimated in the meantime.</p>`}
+     ${w.caption ? `<p class="msg">${w.caption}</p>` : ""}</div>
+     <p><a href="/mydata/activity"><button class="ghost">← Back to Activity</button></a></p>
+<script>${CHART_JS}</script>`,
     sha,
   );
 }

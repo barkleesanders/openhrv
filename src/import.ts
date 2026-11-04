@@ -30,9 +30,16 @@ export function parseHealthAutoExport(root: unknown, source = "health_auto_expor
     for (const pt of (m.data as Array<Record<string, unknown>>) ?? []) {
       const date = String(pt.date ?? new Date().toISOString());
       const meta: Record<string, unknown> = {};
-      for (const k of ["value", "stage", "sleepStart", "sleepEnd", "inBedStart", "inBedEnd", "source"]) {
+      for (const k of ["value", "stage", "sleepStart", "sleepEnd", "inBedStart", "inBedEnd", "source", "stages"]) {
         if (pt[k] !== undefined) meta[k] = pt[k];
       }
+      // Granularity wave: hourly points carry granularity:"hourly". Their
+      // external_id gets an "hourly:" segment so a daily rollup and an
+      // hourly point can never collide, while DAILY ids keep the exact
+      // legacy format — existing rows keep deduping (no duplicate flood
+      // on the first hourly sync).
+      const hourly = pt.granularity === "hourly";
+      if (hourly) meta.granularity = "hourly";
       out.push({
         type: name,
         value: num(pt.qty),
@@ -40,7 +47,9 @@ export function parseHealthAutoExport(root: unknown, source = "health_auto_expor
         start_at: date,
         end_at: typeof pt.sleepEnd === "string" ? pt.sleepEnd : null,
         source: typeof pt.source === "string" ? `${source}:${pt.source}` : source,
-        external_id: `${name}:${date}:${String(pt.source ?? "")}`,
+        external_id: hourly
+          ? `${name}:hourly:${date}:${String(pt.source ?? "")}`
+          : `${name}:${date}:${String(pt.source ?? "")}`,
         meta,
       });
     }

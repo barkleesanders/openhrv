@@ -61,6 +61,18 @@ export function stageTotalsForNight(
     } catch {
       meta = {};
     }
+    // Granularity wave: the Muse Health connector exposes only stage
+    // DURATIONS (no stage intervals), so the sync attaches them to the
+    // night's sleep point as meta.stages = {stage: minutes}. Prefer that
+    // object; else fall back to the single-stage meta.stage rows.
+    const stagesObj = meta.stages;
+    if (stagesObj && typeof stagesObj === "object" && !Array.isArray(stagesObj)) {
+      for (const [k, v] of Object.entries(stagesObj as Record<string, unknown>)) {
+        const mins = Number(v);
+        if (Number.isFinite(mins) && mins > 0) totals.set(k.toLowerCase(), (totals.get(k.toLowerCase()) ?? 0) + mins);
+      }
+      continue;
+    }
     const stage = typeof meta.stage === "string" ? meta.stage.toLowerCase() : null;
     if (!stage || s.value === null) continue;
     const minutes = s.unit === "min" ? s.value : s.unit === "h" || s.unit === "hr" ? s.value * 60 : s.value * 60;
