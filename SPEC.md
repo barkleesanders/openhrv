@@ -64,37 +64,37 @@ D1–D8.
 
 | # | Feature (decompile §) | OpenHRV behavior | Wave | Status |
 |---|---|---|---|---|
-| 1 | HRV engine — RMSSD/SDNN/pNN50/LF-HF/Baevsky/HR stats (§b,g) | Pure-TS module per math spec above, shared by all sources | D3 | in-progress |
-| 2 | Artifact filtering (§g) | Cleaning spec §1 above; removal count reported per measurement | D3 | in-progress |
-| 3 | Camera PPG measurement (§b,g) | Measure page: getUserMedia fingertip PPG, peak detection → RR → engine; clear unsupported-browser fallback | D3 | in-progress |
-| 4 | BLE chest-strap measurement (§b,g) | Web Bluetooth Heart Rate service, RR (1/1024 s units) streamed live → engine; fallback message where unsupported | D3 | in-progress |
-| 5 | **Health Auto Export REST import** (§b,g — D4 primary pipe) | `POST /api/import/health-auto-export` accepts the Health Auto Export app's JSON (metrics array: HRV SDNN, resting HR, heart rate, sleep analysis, BP, SpO2, respiratory rate, steps, workouts…), gated by a per-owner bearer import token (shown in Settings with copy button + in-app setup instructions). Samples land in the normalized store | D4 | in-progress |
-| 6 | **iOS Shortcuts import** (§b,g) | `POST /api/import/shortcut` (same import token) accepts flexible JSON health samples; the Shortcut recipe (read HRV/health in Shortcuts → POST) is documented in-app on the Import/Settings screen | D4 | in-progress |
-| 7 | **Apple Health export.xml upload** (§b,g) | Settings/Import page file upload; Record elements parsed into the normalized store (HR, HRV SDNN, BP, sleep, steps…) with source=apple_health | D4 | in-progress |
-| 8 | **Normalized samples store** (§g) | One `health_samples` store keyed by type + source (apple_health / strava / manual / ble / ppg / shortcut), feeding Today, gauges, scores and factor impact; source attribution preserved on every sample | D4 | in-progress |
-| 9 | **Write-back feed toward Apple Health** (§b,g) | `GET /api/export/health-writeback` (import token) returns samples the phone should write into Health (breathing mindful minutes, measurement HRV/HR summaries, in-app sleep) + a documented iOS Shortcut recipe using "Log Health Sample" (+ downloadable recipe file). Platform truth: a Worker cannot write HealthKit directly — automatic native write-back is the D7 companion's path (HealthKit entitlement); the Worker-side feed + Shortcut is the build-now lane | D4 | in-progress |
-| 10 | **Full data export** (§b) | Settings: download all owner data (measurements, samples, journal, sleep) as JSON and CSV | D4 | in-progress |
+| 1 | HRV engine — RMSSD/SDNN/pNN50/LF-HF/Baevsky/HR stats (§b,g) | Pure-TS module per math spec above, shared by all sources | D3 | pass |
+| 2 | Artifact filtering (§g) | Cleaning spec §1 above; removal count reported per measurement | D3 | pass |
+| 3 | Camera PPG measurement (§b,g) | Measure page: getUserMedia fingertip PPG, peak detection → RR → engine; clear unsupported-browser fallback | D3 | pass |
+| 4 | BLE chest-strap measurement (§b,g) | Web Bluetooth Heart Rate service, RR (1/1024 s units) streamed live → engine; fallback message where unsupported | D3 | pass |
+| 5 | **Health Auto Export REST import** (§b,g — D4 primary pipe) | `POST /api/import/health-auto-export` accepts the Health Auto Export app's JSON (metrics array: HRV SDNN, resting HR, heart rate, sleep analysis, BP, SpO2, respiratory rate, steps, workouts…), gated by a per-owner bearer import token (shown in Settings with copy button + in-app setup instructions). Samples land in the normalized store | D4 | pass |
+| 6 | **iOS Shortcuts import** (§b,g) | `POST /api/import/shortcut` (same import token) accepts flexible JSON health samples; the Shortcut recipe (read HRV/health in Shortcuts → POST) is documented in-app on the Import/Settings screen | D4 | pass |
+| 7 | **Apple Health export.xml upload** (§b,g) | Settings/Import page file upload; Record elements parsed into the normalized store (HR, HRV SDNN, BP, sleep, steps…) with source=apple_health | D4 | pass |
+| 8 | **Normalized samples store** (§g) | One `health_samples` store keyed by type + source (apple_health / strava / manual / ble / ppg / shortcut), feeding Today, gauges, scores and factor impact; source attribution preserved on every sample | D4 | pass |
+| 9 | **Write-back feed toward Apple Health** (§b,g) | `GET /api/export/health-writeback` (import token) returns samples the phone should write into Health (breathing mindful minutes, measurement HRV/HR summaries, in-app sleep) + a documented iOS Shortcut recipe using "Log Health Sample" (+ downloadable recipe file). Platform truth: a Worker cannot write HealthKit directly — automatic native write-back is the D7 companion's path (HealthKit entitlement); the Worker-side feed + Shortcut is the build-now lane | D4 | pass |
+| 10 | **Full data export** (§b) | Settings: download all owner data (measurements, samples, journal, sleep) as JSON and CSV | D4 | pass |
 | 11 | **Strava connector — OAuth connect** (D9) | `/connect/strava` → Strava authorize → callback → tokens stored encrypted in D1 (AES-GCM, key from Worker secret). Requires the owner's Strava API app credentials as Worker secrets; without them the Connect UI shows a clear "needs your Strava API keys" state | D9 | in-progress |
 | 12 | **Strava activity import** (D9) | Activities (run/ride/swim incl. average/max HR; HR streams where available) pulled into the normalized store with source=strava | D9 | in-progress |
 | 13 | **Strava webhook receiver** (D9) | `GET/POST /api/webhooks/strava`: verify-token handshake; activity create/update events trigger a pull (or are queued in `events` when credentials are absent) | D9 | in-progress |
 | 14 | **Withings connector** (phase 2 — noted, not this build) | Scale / blood-pressure via the same normalized-store pattern; listed so the connector layer's next step is on record | D9 | open |
-| 15 | Today dashboard (§b,c) | `/` Today page: Battery + Pressure gauges, latest metrics, recent history | D2 | in-progress |
-| 16 | **Battery (charge)** — headline gauge + Battery detail screen (§b, BatteryDetails module; Watch Battery gauge/detail) | Today shows Battery as a charge % ("how charged you are") with state label. Detail screen `/battery`: charge level + state, 14-reading charge trend chart, and a factors panel listing what is draining/recharging it (last sleep duration vs baseline, prior-day stress load, recent measurement load) each with direction + magnitude or an honest "no data logged" note. Score: original heuristic from RMSSD vs personal baseline (SPEC math notes) | D5 | in-progress |
-| 17 | **Stress** — headline gauge + Stress detail screen (§b, Pressure/stress details; Watch Pressure gauge/detail) | Today shows a Stress gauge (% + state label: Low/Moderate/High/Very high). Detail screen `/stress`: current stress from the measurement engine (Baevsky stress index primary, LF/HF secondary — published mapping in SPEC math notes), 14-reading trend chart, and a what-drives-it breakdown (SI, LF/HF, RMSSD vs baseline, latest measurement source/time) | D5 | in-progress |
-| 18 | **Pressure** — headline gauge + Pressure detail screen (§b, BloodPressureDetails/PressureDetails modules; Watch Pressure gauge) | Today shows a Pressure gauge (% load). Detail screen `/pressure`: current load, 14-reading trend chart, contributors panel (Baevsky SI component, LF/HF component, recent measurement density) mirroring the decompiled Pressure gauge + detail structure | D5 | in-progress |
-| 19 | **Stress impact / factor impact** (§b, ScienceLab + Insights + Tag Bank) | Impact cards for every tracked factor — journal tags (incl. caffeine/alcohol-style logged tags), sleep duration/quality (from sleep records), activity days — each card: measured impact on Stress, HRV (RMSSD) and Battery vs the owner's personal baseline, computed as days-with-factor vs days-without means with delta %, effect direction, and sample counts (n with / n without). Below the minimum sample (3 with + 3 without) the card shows an honest "not enough data yet" state instead of a number. Impact list screen `/impact` + per-factor detail view | D5 | in-progress |
+| 15 | Today dashboard (§b,c) | `/` Today page: Battery + Pressure gauges, latest metrics, recent history | D2 | pass |
+| 16 | **Battery (charge)** — headline gauge + Battery detail screen (§b, BatteryDetails module; Watch Battery gauge/detail) | Today shows Battery as a charge % ("how charged you are") with state label. Detail screen `/battery`: charge level + state, 14-reading charge trend chart, and a factors panel listing what is draining/recharging it (last sleep duration vs baseline, prior-day stress load, recent measurement load) each with direction + magnitude or an honest "no data logged" note. Score: original heuristic from RMSSD vs personal baseline (SPEC math notes) | D5 | pass |
+| 17 | **Stress** — headline gauge + Stress detail screen (§b, Pressure/stress details; Watch Pressure gauge/detail) | Today shows a Stress gauge (% + state label: Low/Moderate/High/Very high). Detail screen `/stress`: current stress from the measurement engine (Baevsky stress index primary, LF/HF secondary — published mapping in SPEC math notes), 14-reading trend chart, and a what-drives-it breakdown (SI, LF/HF, RMSSD vs baseline, latest measurement source/time) | D5 | pass |
+| 18 | **Pressure** — headline gauge + Pressure detail screen (§b, BloodPressureDetails/PressureDetails modules; Watch Pressure gauge) | Today shows a Pressure gauge (% load). Detail screen `/pressure`: current load, 14-reading trend chart, contributors panel (Baevsky SI component, LF/HF component, recent measurement density) mirroring the decompiled Pressure gauge + detail structure | D5 | pass |
+| 19 | **Stress impact / factor impact** (§b, ScienceLab + Insights + Tag Bank) | Impact cards for every tracked factor — journal tags (incl. caffeine/alcohol-style logged tags), sleep duration/quality (from sleep records), activity days — each card: measured impact on Stress, HRV (RMSSD) and Battery vs the owner's personal baseline, computed as days-with-factor vs days-without means with delta %, effect direction, and sample counts (n with / n without). Below the minimum sample (3 with + 3 without) the card shows an honest "not enough data yet" state instead of a number. Impact list screen `/impact` + per-factor detail view | D5 | pass |
 | 20 | Health score / category details — Activity, Blood Pressure, Health (§b) | My Data categories with per-category views | D5 | open |
 | 21 | Sleep flow + sleep details (§b,g) | Sleep table + import via D4; sleep page/detail | D5 | open |
 | 22 | Journal + manual tracking + tags (§b) | Journal page: entries, mood, tags; API CRUD | D5 | in-progress |
 | 23 | Voice comments (§b,i) | Voice note capture (Web Audio) attached to journal entries | D5 | open |
-| 24 | Breathing exercises (§b) | Guided box-breathing session UI + session logging API | D5 | in-progress |
+| 24 | Breathing exercises (§b) | Guided box-breathing session UI + session logging API | D5 | pass |
 | 25 | Self-tests / Self-Discovery (§b) | Orthostatic test flow + self_tests store; further tests per inventory | D5 | open |
 | 26 | Science Lab — experiments & correlations (§b) | Correlations over the owner's own data (tags vs HRV) | D5 | open |
 | 27 | Insights (§b) | Rule-based insights from stored data on Today | D5 | open |
 | 28 | AI Coach chat (§b) | Workers AI chat grounded in the owner's stored measurements (no external API) | D5 | open |
 | 29 | News / stories content (§b) | Static original content cards in-app (no third-party content service) | D5 | open |
 | 30 | Onboarding (§b,c) | First-run intro flow explaining sources + permissions in the PWA | D5 | open |
-| 31 | Accounts / auth (§b,i) | Platform translation: Cloudflare Access single-owner lock; owner email is the identity; no passwords stored | D2 | in-progress |
+| 31 | Accounts / auth (§b,i) | Platform translation: Cloudflare Access single-owner lock; owner email is the identity; no passwords stored | D2 | pass |
 | 32 | Live Activities (§e) | Translation: live state on the PWA Today dashboard + Web Push (see D8 register) | D6 | open |
 | 33 | Notification Service extension / rich push (§e) | Translation: Web Push to installed PWA via the Worker's push sender | D6 | open |
 | 34 | Notifications — morning readiness, reminders, low-Battery (§b) | Cron scheduler + VAPID Web Push, per-type preferences | D6 | open |
@@ -105,15 +105,17 @@ D1–D8.
 | 39 | Watch ↔ iPhone WCSession sync (§d) | Translation: Watch companion syncs via the Worker API (HTTPS), not WCSession — registered deviation | D7 | open |
 | 40 | iPhone widgets (§e) | Translation: PWA home-screen install + WebMCP glanceable tools; no WidgetKit appex on web — registered deviation | D8 | open |
 | 41 | Paywall / subscriptions / Pro (§b) | Translation: owner-controlled feature flags in settings; no payments (single-user) — registered deviation | D8 | open |
-| 42 | Analytics (§h) | Translation: first-party wide-event JSON logs only (Cloudflare Logs/Traces); no Amplitude/Facebook/AppsFlyer — registered deviation | D2 | in-progress |
+| 42 | Analytics (§h) | Translation: first-party wide-event JSON logs only (Cloudflare Logs/Traces); no Amplitude/Facebook/AppsFlyer — registered deviation | D2 | pass |
 | 43 | Support / Intercom (§b) | Translation: in-app About/feedback section — registered deviation | D8 | open |
 | 44 | Sharing (§b) | Share a measurement summary via the Web Share API | D5 | open |
 | 45 | Home-screen quick actions (§b) | Translation: PWA shortcuts in the web manifest (Measure, Journal) | D2 | open |
 | 46 | Background work / daily sync (§b,i) | Translation: Worker Cron triggers (with D6) replace BGTask scheduling | D6 | open |
 | 47 | Profile, settings, data deletion (§b) | More page: preferences + delete-my-data action over D1 | D5 | open |
-| 48 | Permissions model (§i) | Browser permission prompts per feature (camera, bluetooth, notifications) with plain-language explanations | D3 | in-progress |
-| 49 | WebMCP agent surface (fleet gate) | /.well-known/webmcp.json discovery, /api/webmcp tools, beacon, robots/llms advertisement, in-page tool registration | D2 | in-progress |
-| 50 | Observability | Native CF logs+traces (persist) + one wide-event JSON line per request (pathname only) | D2 | in-progress |
+| 48 | Permissions model (§i) | Browser permission prompts per feature (camera, bluetooth, notifications) with plain-language explanations | D3 | pass |
+| 49 | WebMCP agent surface (fleet gate) | /.well-known/webmcp.json discovery, /api/webmcp tools, beacon, robots/llms advertisement, in-page tool registration | D2 | pass |
+| 50 | Observability | Native CF logs+traces (persist) + one wide-event JSON line per request (pathname only) | D2 | pass |
+| 51 | SPEC + HRV oracle (goal D1) | This document's claim table (every decompile feature row §b–§j) + `oracle/` — a pure-stdlib Python reference implementation and 3 frozen RR vectors with expected RMSSD/SDNN/pNN50/LF-HF/Baevsky values; the TS engine must reproduce them in vitest within the stated tolerances (time-domain rel 0.005, Baevsky 0.01, band power 0.08, LF/HF 0.10) | D1 | pass |
+| 52 | Measurement API + manual entry + CSV import + history (§b) | `POST /api/measurements` (RR array → computed metrics stored with the RR series), Measure page manual RR paste/entry, CSV file import, My Data history list + RMSSD chart; WebMCP tool parity (`openhrv_create_measurement`, `openhrv_list_measurements`) | D3 | pass |
 
 ## Deviations register (D8 — summary; README carries the same list)
 
@@ -130,3 +132,23 @@ yet built stays `open` above.
 `notification_prefs`, `events` — see `migrations/0001_init.sql`. All health
 data stays in the owner's own Cloudflare account; the public repo contains
 code and synthetic oracle vectors only.
+
+## Ship evidence — 2026-11-03 (waves 1–4)
+
+- Repo: https://github.com/barkleesanders/openhrv (public, MIT). Gates at ship:
+  `npm run check` = tsc clean + vitest 25/25, including the three tests named
+  `oracle vector <name>: engine reproduces Python reference`.
+- Live: https://openhrv.barkleesanders.workers.dev — unauthenticated GET /
+  returns HTTP 302 to the Cloudflare Access login (owner-only allow policy for
+  barkleesanders@gmail.com). D1 migrations 0001 + 0002 applied remotely
+  (14 tables incl. `health_samples`, `strava_tokens`).
+- Connector lanes verified live against production with a seeded import
+  token: Health Auto Export POST → samples in D1 with source attribution +
+  derived sleep row; Shortcut POST → inserted; export.xml POST → parsed +
+  inserted; write-back feed GET → 200 with the Shortcut recipe; bad token →
+  401; Strava webhook verify without the secret → worker 403.
+- Strava activation is the one flagged follow-up: set STRAVA_CLIENT_ID,
+  STRAVA_CLIENT_SECRET, STRAVA_VERIFY_TOKEN, TOKEN_ENC_KEY as Worker secrets
+  from the owner's own Strava API app, then use More → Connect Strava.
+- The seeded import token is the owner's live token (visible/regenerable in
+  More → Settings & connections).
