@@ -25,6 +25,18 @@ Access login at the edge). To self-host your own instance, deploy the Worker,
 create your own D1 database, and put your own Access application + policy (or
 your own auth) in front of it — see `wrangler.toml` and SPEC.md.
 
+## Apple Health sync (always-on)
+
+On the owner's instance, Apple Health data flows in automatically through
+the Muse Apple Health connector: the iPhone syncs HealthKit data to Muse,
+and a scheduled job (every 3 hours) reads daily metrics, sleep sessions and
+workouts, maps them onto the Health Auto Export import contract, and posts
+them to this Worker — no manual exports. The import is idempotent
+(server-side dedupe on (owner, source, external_id)), so the sync safely
+overlaps its window. Health Auto Export, iOS Shortcuts and the export.xml
+upload remain available as manual alternatives, and the write-back feed +
+Shortcut lane (More → Settings & connections) is unchanged.
+
 ## Develop
 
 ```bash

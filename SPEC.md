@@ -198,3 +198,36 @@ code and synthetic oracle vectors only.
 - Final counts: 48 pass / 3 in-progress (rows 11–13, Strava — blocked only
   on the owner's Strava API app secrets) / 1 open (row 14, Withings —
   phase 2 by the goal's own definition).
+
+## Ship evidence — 2026-11-03 (always-on Apple Health connector sync)
+
+- Primary Apple Health lane is now the Muse Apple Health connector
+  (HealthKit data synced from the owner's iPhone to Muse), ahead of the
+  manual pipes: a scheduled job (Muse cron `openhrv-apple-health-sync`,
+  every 3 hours) reads daily metrics, sleep sessions and workout sessions
+  via `health-cli --provider healthkit`, maps them onto the Health Auto
+  Export JSON contract, and POSTs them to `/api/import/health-auto-export`
+  from the Mac mini — the import token is read from D1 inside the poster
+  process and never printed or logged.
+- Mapping: heart_rate_variability_ms→hrv_sdnn, resting_hr_average_bpm→
+  resting_heart_rate, hr_average_bpm→heart_rate, oxygen_saturation_average→
+  spo2 (fraction→%), respiratory_rate_average→respiratory_rate, step_count,
+  active_energy_burned_kcal→active_energy, basal_energy_burned_kcal→
+  basal_energy, distance_walking_running_meters→distance_walking_running,
+  vo2_max; sleep sessions→sleep_analysis points (deriving sleep rows);
+  workout sessions→workouts. Source attribution: `health_auto_export:Muse
+  Apple Health` (workout rows ride the endpoint's plain
+  `health_auto_export` source).
+- First sync 2026-11-03: window 2026-09-01→2026-11-03, received 490 /
+  inserted 490 + 3 derived sleep rows; an identical re-POST inserted 0
+  (health_samples dedupes on (owner, source, external_id); already-present
+  sleep sessions are filtered by the poster). A watermark plus a 2-day
+  overlap window makes every later run incremental and duplicate-free.
+- Known gaps of this lane: the connector exposes no raw samples
+  (`query samples --list-fields` returns an empty sample-type list), so
+  intraday heart-rate points and RR/heartbeat-series data do not flow
+  through it — HRV arrives as the daily SDNN aggregate. Blood-pressure
+  fields are known to the connector but nothing has synced yet
+  (observed: false). Health Auto Export, Shortcuts and export.xml remain
+  available as manual alternatives; the write-back feed + Shortcut lane
+  is unchanged.
