@@ -1003,8 +1003,14 @@ document.getElementById("ask").addEventListener("click", function() {
   var q = document.getElementById("q").value.trim(), m = document.getElementById("cmsg");
   if (!q) return;
   bubble("user", q); document.getElementById("q").value = ""; m.textContent = "Thinking…";
-  fetch("/api/coach", { method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify({ message: q, history: history }) })
-    .then(function(r){ return r.text(); }).then(function(t) {
+  var payload = JSON.stringify({ message: q, history: history });
+  function attempt(n) {
+  fetch("/api/coach", { method: "POST", headers: {"content-type": "application/json"}, body: payload })
+    .then(function(r){ return r.text().then(function(t){ return { status: r.status, t: t }; }); }).then(function(res) {
+      // One silent retry on a server error: deploys and platform blips
+      // are transient, and the user should never see them (2026-11-04).
+      if (res.status >= 500 && n < 1) { setTimeout(function(){ attempt(n + 1); }, 1200); return; }
+      var t = res.t;
       // Defensive parse: an expired Access session answers with an HTML
       // redirect page, not JSON \u2014 never print a raw platform string.
       var j = null; try { j = JSON.parse(t); } catch (e) {}
@@ -1013,7 +1019,9 @@ document.getElementById("ask").addEventListener("click", function() {
       m.textContent = "";
       history.push({ role: "user", content: q }, { role: "assistant", content: j.reply });
       bubble("assistant", j.reply);
-    }).catch(function(){ m.innerHTML = "<span class='err'>The coach could not be reached \u2014 check your connection and try again.</span>"; });
+    }).catch(function(){ if (n < 1) { setTimeout(function(){ attempt(n + 1); }, 1200); return; } m.innerHTML = "<span class='err'>The coach could not be reached \u2014 check your connection and try again.</span>"; });
+  }
+  attempt(0);
 });
 </script>`,
     sha,

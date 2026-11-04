@@ -643,3 +643,21 @@ minutes-since-midnight) is not display and is untouched. Tests:
 minute rollover) + the chart/coach label producers; the three suites
 that asserted 24-hour strings (chart, coachpanel, tapfix) now assert
 the 12-hour forms. 181/181 tests, `tsc` clean.
+
+## Ship evidence — 2026-11-04 (coach 500 hardening)
+
+Barklee hit the global onError 500 ("Something went wrong on the
+server") twice on the production coach at 15:47-15:48 PST — inside
+the 12-hour wave's deploy rollout window; identical asks minutes
+later returned grounded 200s. The route's AI call was guarded (502),
+but everything around it (flags, data assembly, context build) was
+not: any platform-layer throw in that span became a bare 500. (The
+D1 read helpers swallow query errors and row shapes are coerced, so
+the exposure is the platform/binding layer and the long tail of pure
+assembly code.) Fix: POST /api/coach now delegates to coachAsk()
+inside one guard — any throw logs {evt:"coach_error",
+stage:"assembly"} and returns the human 502. The coach page client
+additionally retries a 5xx ask once, silently, after 1.2 s, so a
+rollout blip never reaches the user. Regression tests in
+test/coachfix.test.ts (binding-fault injection -> human 502 with no
+raw leak; page script carries the retry). 183/183 tests.

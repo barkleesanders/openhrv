@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { computeHrv, parseRrText } from "./hrv";
 import {
   ICON_SVG,
@@ -1338,6 +1338,19 @@ async function getFlags(db: D1Database, owner: string): Promise<Record<string, b
 }
 
 app.post("/api/coach", async (c) => {
+  // One guard around the WHOLE ask: a transient platform throw during
+  // data assembly (D1 blip, deploy-window binding churn) must surface
+  // as a retryable coach failure, never the bare onError 500
+  // (2026-11-04: Barklee hit that 500 twice during a deploy rollout).
+  try {
+    return await coachAsk(c);
+  } catch (e) {
+    console.log(JSON.stringify({ evt: "coach_error", stage: "assembly", error: e instanceof Error ? e.message : String(e) }));
+    return c.json({ ok: false, error: "The coach couldn\u2019t answer just now \u2014 please try again in a moment." }, 502);
+  }
+});
+
+async function coachAsk(c: Context<{ Bindings: Env }>): Promise<Response> {
   const flags = await getFlags(c.env.DB, c.env.OWNER_EMAIL);
   if (!flags.ai_coach) return c.json({ ok: false, error: "AI Coach is turned off in More → Feature flags." }, 403);
   if (!c.env.AI) return c.json({ ok: false, error: "AI Coach unavailable — the Workers AI binding is not configured on this instance." }, 503);
@@ -1418,7 +1431,7 @@ app.post("/api/coach", async (c) => {
     console.log(JSON.stringify({ evt: "coach_error", error: e instanceof Error ? e.message : String(e) }));
     return c.json({ ok: false, error: "The coach couldn\u2019t answer just now \u2014 please try again in a moment." }, 502);
   }
-});
+}
 
 // --- voice comments (audio in R2, metadata in D1) ---
 function arrayBufferToBase64(buf: ArrayBuffer): string {

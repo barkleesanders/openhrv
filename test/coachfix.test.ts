@@ -146,3 +146,31 @@ describe("HAE metric-name normalization", () => {
     expect(out[0].external_id).toBe("heart_rate_variability:2026-11-03T18:00:00-08:00:Watch");
   });
 });
+
+describe("coach assembly guard (2026-11-04 deploy-window 500)", () => {
+  it("a binding-layer throw during the ask maps to the human 502, never the onError 500", async () => {
+    // The read helpers swallow D1 errors and row shapes are coerced, so
+    // the realistic uncaught-throw class is the platform layer itself:
+    // during the 2026-11-04 deploy rollout Barklee's asks returned the
+    // onError 500 while identical asks minutes later returned 200. A DB
+    // binding that throws on access models that failure faithfully.
+    const ai = { run: async () => ({ response: "unused" }) };
+    const env = { OWNER_EMAIL: OWNER, GIT_SHA: "test", AI: ai } as unknown as Env;
+    Object.defineProperty(env, "DB", {
+      get() { throw new Error("simulated binding failure during rollout"); },
+    });
+    const r = await app.request("/api/coach", jsonInit({ message: "What moves my numbers most?" }), env);
+    expect(r.status).toBe(502);
+    const j = (await r.json()) as { ok: boolean; error: string };
+    expect(j.ok).toBe(false);
+    expect(j.error).toContain("try again in a moment");
+    expect(j.error).not.toContain("Something went wrong on the server");
+    expect(j.error).not.toContain("simulated binding failure");
+  });
+
+  it("the coach page script retries once on a server error before surfacing it", () => {
+    const html = coachPage("test");
+    expect(html).toContain("attempt(0)");
+    expect(html).toContain("res.status >= 500");
+  });
+});
