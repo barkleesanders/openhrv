@@ -83,34 +83,34 @@ D1–D8.
 | 17 | **Stress** — headline gauge + Stress detail screen (§b, Pressure/stress details; Watch Pressure gauge/detail) | Today shows a Stress gauge (% + state label: Low/Moderate/High/Very high). Detail screen `/stress`: current stress from the measurement engine (Baevsky stress index primary, LF/HF secondary — published mapping in SPEC math notes), 14-reading trend chart, and a what-drives-it breakdown (SI, LF/HF, RMSSD vs baseline, latest measurement source/time) | D5 | pass |
 | 18 | **Pressure** — headline gauge + Pressure detail screen (§b, BloodPressureDetails/PressureDetails modules; Watch Pressure gauge) | Today shows a Pressure gauge (% load). Detail screen `/pressure`: current load, 14-reading trend chart, contributors panel (Baevsky SI component, LF/HF component, recent measurement density) mirroring the decompiled Pressure gauge + detail structure | D5 | pass |
 | 19 | **Stress impact / factor impact** (§b, ScienceLab + Insights + Tag Bank) | Impact cards for every tracked factor — journal tags (incl. caffeine/alcohol-style logged tags), sleep duration/quality (from sleep records), activity days — each card: measured impact on Stress, HRV (RMSSD) and Battery vs the owner's personal baseline, computed as days-with-factor vs days-without means with delta %, effect direction, and sample counts (n with / n without). Below the minimum sample (3 with + 3 without) the card shows an honest "not enough data yet" state instead of a number. Impact list screen `/impact` + per-factor detail view | D5 | pass |
-| 20 | Health score / category details — Activity, Blood Pressure, Health (§b) | My Data categories with per-category views | D5 | open |
-| 21 | Sleep flow + sleep details (§b,g) | Sleep table + import via D4; sleep page/detail | D5 | open |
-| 22 | Journal + manual tracking + tags (§b) | Journal page: entries, mood, tags; API CRUD | D5 | in-progress |
-| 23 | Voice comments (§b,i) | Voice note capture (Web Audio) attached to journal entries | D5 | open |
+| 20 | Health score / category details — Activity, Blood Pressure, Health (§b) | My Data categories with per-category views: `/mydata/:category` detail pages (Activity, Blood Pressure — systolic/diastolic pairing, Health, Body, Sleep & Mind) with latest + 7-day average + range + counts per sample type, served by `GET /api/mydata/categories`; wave-2 tests seed samples and assert the computed summaries | D5 | pass |
+| 21 | Sleep flow + sleep details (§b,g) | Sleep detail screen `/sleep` + `GET /api/sleep`: per-night duration vs 8 h target, debt vs the owner's median baseline, 7-night debt total, median/average duration, and stage totals (deep/REM/core/awake) from Health Auto Export stage samples; wave-2 tests verify debt + stage math on seeded nights | D5 | pass |
+| 22 | Journal + manual tracking + tags (§b) | Journal page: entries, mood, tags; API CRUD; wave 2 adds voice comments (row 23) attachable to entries | D5 | pass |
+| 23 | Voice comments (§b,i) | Voice comments: MediaRecorder capture on the Journal page → `POST /api/voice` stores audio in R2 (`MEDIA` bucket), Workers AI Whisper transcription when the AI binding is present, playback via `GET /api/voice/:id/audio`, delete; attaches to a journal entry on save; wave-2 tests exercise upload/transcribe/attach/playback/delete with stubbed R2 + Whisper | D5 | pass |
 | 24 | Breathing exercises (§b) | Guided box-breathing session UI + session logging API | D5 | pass |
-| 25 | Self-tests / Self-Discovery (§b) | Orthostatic test flow + self_tests store; further tests per inventory | D5 | open |
-| 26 | Science Lab — experiments & correlations (§b) | Correlations over the owner's own data (tags vs HRV) | D5 | open |
-| 27 | Insights (§b) | Rule-based insights from stored data on Today | D5 | open |
-| 28 | AI Coach chat (§b) | Workers AI chat grounded in the owner's stored measurements (no external API) | D5 | open |
-| 29 | News / stories content (§b) | Static original content cards in-app (no third-party content service) | D5 | open |
-| 30 | Onboarding (§b,c) | First-run intro flow explaining sources + permissions in the PWA | D5 | open |
+| 25 | Self-tests / Self-Discovery (§b) | `/tests` page + `POST/GET /api/self-tests` over the `self_tests` store: reaction time (5 randomized-wait trials, mean/median/best), finger tapping (30 s count + taps/sec), breath hold (timed, with safety copy), orthostatic (lying vs standing measurement comparison), HRV episode (baseline → 2-min paced breathing → post, RMSSD delta). Real timing/scoring in the browser; results trended on the page; wave-2 tests cover storage + validation | D5 | pass |
+| 26 | Science Lab — experiments & correlations (§b) | `/lab` + `GET /api/lab`: per-day series built from measurements (RMSSD/HR/Battery/Stress/pressure), sleep duration, steps and journal tags; Pearson correlations for every pair with ≥5 shared days, ranked by strength, plus an X/Y scatter explorer; wave-2 tests verify day-building and r values against hand-computed expectations (gate n≥5, zero-variance → none) | D5 | pass |
+| 27 | Insights (§b) | Rule-based insights computed from the owner's stored data and shown on Today: data gaps, RMSSD vs baseline (≥10%), Battery 3-reading trend, high-stress streaks, sleep→next-day-RMSSD relation, sleep debt, logged deep-breathing effect; wave-2 tests cover the rules incl. the sleep→RMSSD direction | D5 | pass |
+| 28 | AI Coach chat (§b) | `/coach` + `POST /api/coach`: Workers AI binding (`env.AI`, model var `COACH_MODEL`), system prompt restricts answers to a context block computed from the owner's own data (gauges, trends, sleep, lab correlations, journal factors) with a clear not-medical-advice framing; feature-flag gated (403 when off), 503 when no AI binding; wave-2 tests verify flag/binding behavior and that the context block carries the owner's numbers. Live inference uses Cloudflare Workers AI on the owner's account | D5 | pass |
+| 29 | News / stories content (§b) | `/stories`: five original explainer cards (what HRV measures, breathing and HRV, sleep and readiness, caffeine/alcohol evidence, spotting artifacts) — all copy written for OpenHRV, no third-party content service | D5 | pass |
+| 30 | Onboarding (§b,c) | `/welcome` first-run flow (5 steps: what it measures, ways to measure, connect Apple Health pipes, notifications, privacy) shown on Today until dismissed (persisted `onboarded` setting); relaunchable from More | D5 | pass |
 | 31 | Accounts / auth (§b,i) | Platform translation: Cloudflare Access single-owner lock; owner email is the identity; no passwords stored | D2 | pass |
-| 32 | Live Activities (§e) | Translation: live state on the PWA Today dashboard + Web Push (see D8 register) | D6 | open |
-| 33 | Notification Service extension / rich push (§e) | Translation: Web Push to installed PWA via the Worker's push sender | D6 | open |
-| 34 | Notifications — morning readiness, reminders, low-Battery (§b) | Cron scheduler + VAPID Web Push, per-type preferences | D6 | open |
-| 35 | Watch app — Today/Battery/Pressure gauges (§d) | SwiftUI companion skeleton in-repo mirroring the flows, Worker API client | D7 | open |
-| 36 | Watch workout views (§d) | SwiftUI workout flow skeleton (start/types/process/final) in-repo | D7 | open |
-| 37 | Watch complications (§d,e) | WidgetKit complication skeleton in the D7 project | D7 | open |
-| 38 | Watch faces (§d) | Translation: PWA/watch theme gallery page (no installable .watchface in a web build) — registered deviation | D8 | open |
-| 39 | Watch ↔ iPhone WCSession sync (§d) | Translation: Watch companion syncs via the Worker API (HTTPS), not WCSession — registered deviation | D7 | open |
-| 40 | iPhone widgets (§e) | Translation: PWA home-screen install + WebMCP glanceable tools; no WidgetKit appex on web — registered deviation | D8 | open |
-| 41 | Paywall / subscriptions / Pro (§b) | Translation: owner-controlled feature flags in settings; no payments (single-user) — registered deviation | D8 | open |
+| 32 | Live Activities (§e) | Translation: live state on the PWA Today dashboard + Web Push (see D8 register); push stack live — see rows 33–34 evidence | D6 | pass |
+| 33 | Notification Service extension / rich push (§e) | Translation: Web Push to installed PWA via the Worker's push sender — VAPID (RFC 8292 ES256 JWT) + aes128gcm payload encryption (RFC 8291) implemented on WebCrypto in `src/push.ts`; wave-2 tests include an independent in-test decryptor round-trip; production dispatch evidence in the wave-5/6 ship notes below | D6 | pass |
+| 34 | Notifications — morning readiness, reminders, low-Battery (§b) | Cron `scheduled()` handler on a `*/15 * * * *` trigger: morning readiness (after the day's first measurement), measurement reminder at the owner-set time, low-Battery alert (<25, 20 h cooldown), evening breathing nudge — per-type enable + time preferences in More, owner time zone, every attempt written to `notification_log` with the push-service status; duplicate suppression reads the log. Production evidence: at the 2026-11-04 06:00 UTC tick the live Worker dispatched the two due types to a controlled same-origin test subscription and logged `sent` with HTTP 201; later ticks re-sent nothing; the test subscription/log rows were then removed | D6 | pass |
+| 35 | Watch app — Today/Battery/Pressure gauges (§d) | SwiftUI companion in `watch/` (Xcode project, watchOS 11+): Today screen with Battery/Stress/Pressure gauges + latest measurement, guided 60 s measurement (HealthKit heartbeat-series RR → `POST /api/watch/measurements`), settings with import-token paste + connection test. API lanes `/api/watch/*` enforce the import token and sit behind a dedicated Cloudflare Access bypass app (created 2026-11-03, id b1c3698b-ac6d-4458-8098-f33ac2de0bd4). Build evidence: `xcodebuild build` (watchOS Simulator destination, signing disabled) → **BUILD SUCCEEDED** incl. extension embed validation — see wave-2 ship notes; a simulator *device* could not be created on the build machine (CoreSimulator creation-state failure at ~8 GiB free disk), so it was not run interactively, and it is not installed on a physical Watch | D7 | pass |
+| 36 | Watch workout views (§d) | Workout flow in the same project: type picker (Run/Ride/Swim/Walk/Other) → active session with elapsed time + live RR collection → summary with store-as-measurement (source `watch-workout`); compiles as part of the D7 build evidence | D7 | pass |
+| 37 | Watch complications (§d,e) | WidgetKit extension `OpenHRVComplications` embedded in the app target: circular (Battery gauge), rectangular, inline and corner families fed by `/api/watch/today` with a 30 min timeline refresh; compiles as part of the D7 build evidence; token sharing with the extension container is the documented app-group hardening step (watch/README.md) | D7 | pass |
+| 38 | Watch faces (§d) | Translation: theme gallery page `/themes` (Forest/Ocean/Ember/Mono accent themes, persisted via settings + applied app-wide) — no installable .watchface in a web build; registered deviation | D8 | pass |
+| 39 | Watch ↔ iPhone WCSession sync (§d) | Translation implemented: the Watch companion syncs via the Worker API (`/api/watch/*`, import-token auth, Access bypass app) instead of WCSession — registered deviation | D7 | pass |
+| 40 | iPhone widgets (§e) | Translation: PWA home-screen install (manifest + service worker, wave 1) + WebMCP glanceable tools (row 49) — no WidgetKit appex on web; WidgetKit itself exists in the D7 companion (row 37); registered deviation | D8 | pass |
+| 41 | Paywall / subscriptions / Pro (§b) | Translation: owner-controlled feature flags in More → Settings (AI Coach, Science Lab, Stories — enforced server-side with 403/redirect when off); no payments (single-user) — registered deviation | D8 | pass |
 | 42 | Analytics (§h) | Translation: first-party wide-event JSON logs only (Cloudflare Logs/Traces); no Amplitude/Facebook/AppsFlyer — registered deviation | D2 | pass |
-| 43 | Support / Intercom (§b) | Translation: in-app About/feedback section — registered deviation | D8 | open |
-| 44 | Sharing (§b) | Share a measurement summary via the Web Share API | D5 | open |
-| 45 | Home-screen quick actions (§b) | Translation: PWA shortcuts in the web manifest (Measure, Journal) | D2 | open |
-| 46 | Background work / daily sync (§b,i) | Translation: Worker Cron triggers (with D6) replace BGTask scheduling | D6 | open |
-| 47 | Profile, settings, data deletion (§b) | More page: preferences + delete-my-data action over D1 | D5 | open |
+| 43 | Support / Intercom (§b) | Translation: `/about` page — what OpenHRV is, how data is used, the translations register in-app, and a feedback form stored to the owner's `events` table (`POST /api/feedback`); registered deviation | D8 | pass |
+| 44 | Sharing (§b) | Today's summary and each My Data category can be shared via the Web Share API (`navigator.share`) with a clipboard fallback — text is computed from the owner's actual current numbers | D5 | pass |
+| 45 | Home-screen quick actions (§b) | Translation: PWA shortcuts in the web manifest — Measure, Journal, More, Self-tests (manifest test asserts all four); served by the Worker's manifest route | D2 | pass |
+| 46 | Background work / daily sync (§b,i) | Translation: Worker Cron trigger `*/15 * * * *` (registered in the deploy output) runs the notification scheduler; replaces BGTask scheduling | D6 | pass |
+| 47 | Profile, settings, data deletion (§b) | More → Settings & connections: profile/preferences, notification + feature-flag settings, and a delete-my-data action (`POST /api/account/delete`, requires typing DELETE) that wipes all 13 owner tables plus R2 voice objects and reports per-table counts; wave-2 test verifies the wipe end-to-end | D5 | pass |
 | 48 | Permissions model (§i) | Browser permission prompts per feature (camera, bluetooth, notifications) with plain-language explanations | D3 | pass |
 | 49 | WebMCP agent surface (fleet gate) | /.well-known/webmcp.json discovery, /api/webmcp tools, beacon, robots/llms advertisement, in-page tool registration | D2 | pass |
 | 50 | Observability | Native CF logs+traces (persist) + one wide-event JSON line per request (pathname only) | D2 | pass |
@@ -129,7 +129,11 @@ yet built stays `open` above.
 
 `users`, `settings`, `measurements`, `rr_series`, `sleep`, `journal`,
 `breathing_sessions`, `self_tests`, `push_subscriptions`,
-`notification_prefs`, `events` — see `migrations/0001_init.sql`. All health
+`notification_prefs`, `events` — see `migrations/0001_init.sql`;
+`health_samples` + `strava_tokens` in `migrations/0002_samples.sql`;
+`voice_notes` (R2 object keys + transcripts) + `notification_log`
+(delivery attempts) in `migrations/0003_wave2.sql`. Voice audio lives in
+the `openhrv-media` R2 bucket. All health
 data stays in the owner's own Cloudflare account; the public repo contains
 code and synthetic oracle vectors only.
 
@@ -152,3 +156,45 @@ code and synthetic oracle vectors only.
   from the owner's own Strava API app, then use More → Connect Strava.
 - The seeded import token is the owner's live token (visible/regenerable in
   More → Settings & connections).
+
+## Ship evidence — 2026-11-03 (wave 2: D5 remainder, D6, D7, D8)
+
+- Gates at ship: `npm run check` = tsc clean + vitest 66/66 (25 wave-1 + 41
+  new: lab/sleep/categories math, push crypto round-trip with an independent
+  decryptor, scheduler dedup, and stub-D1 endpoint tests for every wave-2
+  API and page).
+- Infrastructure created: R2 bucket `openhrv-media`; migration
+  `0003_wave2.sql` applied remotely (voice_notes, notification_log);
+  VAPID keypair generated on-device and stored as Worker secrets
+  (VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY / VAPID_SUBJECT — never in the
+  repo); Cloudflare Access bypass app for `/api/watch/*`
+  (b1c3698b-ac6d-4458-8098-f33ac2de0bd4, bypass policy: the Worker enforces
+  the import token). Deploy output confirms bindings DB + MEDIA + AI and
+  the `*/15 * * * *` cron trigger.
+- D6 production dispatch: with a controlled test subscription registered
+  server-side (endpoint = the Worker's own same-origin webhook lane,
+  standing in for a device push endpoint), the 2026-11-04 06:00 UTC cron
+  tick dispatched measurement_reminder + breathing_nudge; both attempts
+  are in `notification_log` as `sent` with HTTP 201 (the receiving endpoint
+  recorded the encrypted deliveries), and later ticks dispatched nothing
+  (log-based dedup). Test subscription, log rows and arrival events were
+  removed afterwards (read back as 0/0/0). Delivery to a real Apple/Google
+  push endpoint awaits the owner's on-phone step: open the site in Safari
+  signed in via Access → Share → Add to Home Screen → open the installed
+  app → More → Notifications → Enable notifications → Send test
+  notification.
+- D7 build evidence: the build machine initially had no simulator
+  runtimes (deleted 2026-11-02); `xcodebuild -downloadPlatform watchOS`
+  installed the watchOS 26.5 simulator runtime during this wave, after
+  which `xcodebuild build -destination 'generic/platform=watchOS
+  Simulator' CODE_SIGNING_ALLOWED=NO` completed with **BUILD SUCCEEDED**
+  (both targets compiled + linked; the WidgetKit extension embedded and
+  passed bundle validation; `swiftc -typecheck` against the SDK is also
+  clean for both targets). Creating a simulator *device* failed
+  repeatedly ("Device was allocated but was stuck in creation state",
+  CoreSimulator.log) with ~8 GiB free disk, so the app was not run
+  interactively in a simulator, and it has not been installed on a
+  physical Watch.
+- Final counts: 48 pass / 3 in-progress (rows 11–13, Strava — blocked only
+  on the owner's Strava API app secrets) / 1 open (row 14, Withings —
+  phase 2 by the goal's own definition).

@@ -1,0 +1,403 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		C10000000000000000000101 /* OpenHRVApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000101 /* OpenHRVApp.swift */; };
+		C10000000000000000000102 /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000102 /* APIClient.swift */; };
+		C10000000000000000000103 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000103 /* Models.swift */; };
+		C10000000000000000000104 /* GaugeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000104 /* GaugeView.swift */; };
+		C10000000000000000000105 /* TodayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000105 /* TodayView.swift */; };
+		C10000000000000000000106 /* MeasureView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000106 /* MeasureView.swift */; };
+		C10000000000000000000107 /* WorkoutView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000107 /* WorkoutView.swift */; };
+		C10000000000000000000108 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000108 /* SettingsView.swift */; };
+		C10000000000000000000109 /* HeartbeatCollector.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000109 /* HeartbeatCollector.swift */; };
+		C10000000000000000000201 /* Complications.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000110 /* Complications.swift */; };
+		C10000000000000000000202 /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000102 /* APIClient.swift */; };
+		C10000000000000000000203 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000103 /* Models.swift */; };
+		C10000000000000000000301 /* OpenHRVComplications.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = B10000000000000000000002 /* OpenHRVComplications.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		120000000000000000000001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A10000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = D10000000000000000000002;
+			remoteInfo = OpenHRVComplications;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		110000000000000000000004 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				C10000000000000000000301 /* OpenHRVComplications.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		B10000000000000000000001 /* OpenHRVWatch.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = OpenHRVWatch.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		B10000000000000000000002 /* OpenHRVComplications.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = OpenHRVComplications.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		B10000000000000000000101 /* OpenHRVApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenHRVApp.swift; sourceTree = "<group>"; };
+		B10000000000000000000102 /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
+		B10000000000000000000103 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		B10000000000000000000104 /* GaugeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GaugeView.swift; sourceTree = "<group>"; };
+		B10000000000000000000105 /* TodayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TodayView.swift; sourceTree = "<group>"; };
+		B10000000000000000000106 /* MeasureView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeasureView.swift; sourceTree = "<group>"; };
+		B10000000000000000000107 /* WorkoutView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkoutView.swift; sourceTree = "<group>"; };
+		B10000000000000000000108 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		B10000000000000000000109 /* HeartbeatCollector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HeartbeatCollector.swift; sourceTree = "<group>"; };
+		B10000000000000000000110 /* Complications.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Complications.swift; sourceTree = "<group>"; };
+		B10000000000000000000111 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		110000000000000000000002 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		110000000000000000000006 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		A10000000000000000000002 /* Main group */ = {
+			isa = PBXGroup;
+			children = (
+				A10000000000000000000004 /* OpenHRVWatch */,
+				A10000000000000000000005 /* OpenHRVComplications */,
+				A10000000000000000000003 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		A10000000000000000000003 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				B10000000000000000000001 /* OpenHRVWatch.app */,
+				B10000000000000000000002 /* OpenHRVComplications.appex */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		A10000000000000000000004 /* OpenHRVWatch */ = {
+			isa = PBXGroup;
+			children = (
+				B10000000000000000000101 /* OpenHRVApp.swift */,
+				B10000000000000000000102 /* APIClient.swift */,
+				B10000000000000000000103 /* Models.swift */,
+				B10000000000000000000104 /* GaugeView.swift */,
+				B10000000000000000000105 /* TodayView.swift */,
+				B10000000000000000000106 /* MeasureView.swift */,
+				B10000000000000000000107 /* WorkoutView.swift */,
+				B10000000000000000000108 /* SettingsView.swift */,
+				B10000000000000000000109 /* HeartbeatCollector.swift */,
+			);
+			path = OpenHRVWatch;
+			sourceTree = "<group>";
+		};
+		A10000000000000000000005 /* OpenHRVComplications */ = {
+			isa = PBXGroup;
+			children = (
+				B10000000000000000000110 /* Complications.swift */,
+				B10000000000000000000111 /* Info.plist */,
+			);
+			path = OpenHRVComplications;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		D10000000000000000000001 /* OpenHRVWatch */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = E10000000000000000000002 /* Build configuration list for PBXNativeTarget "OpenHRVWatch" */;
+			buildPhases = (
+				110000000000000000000001 /* Sources */,
+				110000000000000000000002 /* Frameworks */,
+				110000000000000000000003 /* Resources */,
+				110000000000000000000004 /* Embed Foundation Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				120000000000000000000002 /* PBXTargetDependency */,
+			);
+			name = OpenHRVWatch;
+			productName = OpenHRVWatch;
+			productReference = B10000000000000000000001 /* OpenHRVWatch.app */;
+			productType = "com.apple.product-type.application";
+		};
+		D10000000000000000000002 /* OpenHRVComplications */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = E10000000000000000000003 /* Build configuration list for PBXNativeTarget "OpenHRVComplications" */;
+			buildPhases = (
+				110000000000000000000005 /* Sources */,
+				110000000000000000000006 /* Frameworks */,
+				110000000000000000000007 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = OpenHRVComplications;
+			productName = OpenHRVComplications;
+			productReference = B10000000000000000000002 /* OpenHRVComplications.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		A10000000000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				LastSwiftUpdateCheck = 2600;
+				LastUpgradeCheck = 2600;
+				TargetAttributes = {
+					D10000000000000000000001 = {
+						CreatedOnToolsVersion = 26.0;
+					};
+					D10000000000000000000002 = {
+						CreatedOnToolsVersion = 26.0;
+					};
+				};
+			};
+			buildConfigurationList = E10000000000000000000001 /* Build configuration list for PBXProject "OpenHRVWatch" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = A10000000000000000000002 /* Main group */;
+			productRefGroup = A10000000000000000000003 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				D10000000000000000000001 /* OpenHRVWatch */,
+				D10000000000000000000002 /* OpenHRVComplications */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		110000000000000000000003 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		110000000000000000000007 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		110000000000000000000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 4294967295;
+			files = (
+				C10000000000000000000101 /* OpenHRVApp.swift in Sources */,
+				C10000000000000000000102 /* APIClient.swift in Sources */,
+				C10000000000000000000103 /* Models.swift in Sources */,
+				C10000000000000000000104 /* GaugeView.swift in Sources */,
+				C10000000000000000000105 /* TodayView.swift in Sources */,
+				C10000000000000000000106 /* MeasureView.swift in Sources */,
+				C10000000000000000000107 /* WorkoutView.swift in Sources */,
+				C10000000000000000000108 /* SettingsView.swift in Sources */,
+				C10000000000000000000109 /* HeartbeatCollector.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		110000000000000000000005 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 4294967295;
+			files = (
+				C10000000000000000000201 /* Complications.swift in Sources */,
+				C10000000000000000000202 /* APIClient.swift in Sources */,
+				C10000000000000000000203 /* Models.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		120000000000000000000002 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = D10000000000000000000002 /* OpenHRVComplications */;
+			targetProxy = 120000000000000000000001 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		F10000000000000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		F10000000000000000000002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+			};
+			name = Release;
+		};
+		F10000000000000000000003 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = OpenHRV;
+				INFOPLIST_KEY_NSHealthShareUsageDescription = "OpenHRV reads heartbeat-series data to compute your HRV measurements.";
+				INFOPLIST_KEY_WKApplication = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.openhrv.watchapp;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SKIP_INSTALL = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				WATCHOS_DEPLOYMENT_TARGET = 11.0;
+			};
+			name = Debug;
+		};
+		F10000000000000000000004 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = OpenHRV;
+				INFOPLIST_KEY_NSHealthShareUsageDescription = "OpenHRV reads heartbeat-series data to compute your HRV measurements.";
+				INFOPLIST_KEY_WKApplication = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.openhrv.watchapp;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SKIP_INSTALL = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				WATCHOS_DEPLOYMENT_TARGET = 11.0;
+			};
+			name = Release;
+		};
+		F10000000000000000000005 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = OpenHRVComplications/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.openhrv.watchapp.complications;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				WATCHOS_DEPLOYMENT_TARGET = 11.0;
+			};
+			name = Debug;
+		};
+		F10000000000000000000006 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = OpenHRVComplications/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.openhrv.watchapp.complications;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				WATCHOS_DEPLOYMENT_TARGET = 11.0;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		E10000000000000000000001 /* Build configuration list for PBXProject "OpenHRVWatch" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				F10000000000000000000001 /* Debug */,
+				F10000000000000000000002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		E10000000000000000000002 /* Build configuration list for PBXNativeTarget "OpenHRVWatch" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				F10000000000000000000003 /* Debug */,
+				F10000000000000000000004 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		E10000000000000000000003 /* Build configuration list for PBXNativeTarget "OpenHRVComplications" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				F10000000000000000000005 /* Debug */,
+				F10000000000000000000006 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = A10000000000000000000001 /* Project object */;
+}
