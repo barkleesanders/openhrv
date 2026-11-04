@@ -97,7 +97,10 @@ export function lineChart(opts: LineChartOpts): string {
     ticks += `<line class="chart-grid" x1="${PAD_L}" y1="${ty.toFixed(1)}" x2="${CHART_W - PAD_R}" y2="${ty.toFixed(1)}" stroke="#e5e5ea" stroke-width="1"/>` +
       `<text x="${PAD_L - 6}" y="${(ty + 3).toFixed(1)}" text-anchor="end" class="chart-tick">${fmt(v, decimals)}</text>`;
   }
-  const yTitle = `<text x="${PAD_L - 6}" y="${PAD_T - 8}" text-anchor="end" class="chart-unit">${esc(opts.yLabel ?? unit)}</text>`;
+  // Axis title sits ABOVE the plot, left-aligned at the plot edge —
+  // end-anchoring it in the 48px gutter clipped any label over ~7 chars
+  // ("Heart rate (bpm)" rendered as "e (bpm)" in the wave screenshots).
+  const yTitle = `<text x="${PAD_L}" y="${PAD_T - 8}" text-anchor="start" class="chart-unit">${esc(opts.yLabel ?? unit)}</text>`;
 
   // Zone bands (value ranges) with labels at the right edge.
   let zoneSvg = "";
