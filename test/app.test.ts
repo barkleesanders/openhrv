@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import app from "../src/index";
+import { app } from "../src/index";
 
 // No D1 binding in unit tests: DB helpers degrade to empty results by design,
 // so page shells and discovery surfaces must still render.

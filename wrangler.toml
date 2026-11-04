@@ -5,12 +5,25 @@ compatibility_date = "2025-09-01"
 [vars]
 OWNER_EMAIL = "barkleesanders@gmail.com"
 GIT_SHA = "dev"
+COACH_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
 
 [[d1_databases]]
 binding = "DB"
 database_name = "openhrv"
 database_id = "f6492245-9c3e-49b7-9665-94c0c402b286"
 migrations_dir = "migrations"
+
+# D6: voice-note audio storage (R2) + Workers AI (coach + transcription).
+[[r2_buckets]]
+binding = "MEDIA"
+bucket_name = "openhrv-media"
+
+[ai]
+binding = "AI"
+
+# D6: notification scheduler tick (rules evaluated in the owner's timezone).
+[triggers]
+crons = ["*/15 * * * *"]
 
 [observability.logs]
 enabled = true

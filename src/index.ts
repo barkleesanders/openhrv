@@ -2,14 +2,23 @@ import { Hono } from "hono";
 import { computeHrv, parseRrText } from "./hrv";
 import {
   ICON_SVG,
+  aboutPage,
+  categoryPage,
+  coachPage,
   journalPage,
+  labPage,
   layout,
   manifestJson,
   measurePage,
   morePage,
   myDataPage,
   serviceWorkerJs,
+  sleepPage,
+  storiesPage,
+  testsPage,
+  themesPage,
   todayPage,
+  welcomePage,
   type TodayData,
 } from "./views";
 import { WEBMCP_TOOLS, webmcpDiscovery } from "./webmcp";
@@ -24,6 +33,7 @@ import {
   scoreSeries,
   stressPct,
   stressState,
+  type FactorImpact,
   type MeasurementLike,
 } from "./insights";
 import { impactPage, scoreDetailPage } from "./views";
@@ -40,6 +50,32 @@ import {
   stravaAuthorizeUrl,
   stravaConfigured,
 } from "./strava";
+import { summarizeSleep } from "./sleep";
+import { bloodPressureReadings, categoryDefs, summarizeCategories } from "./categories";
+import { buildLabDays, correlationPairs, generateInsights, labSeriesLabel } from "./lab";
+import { COACH_SYSTEM_PROMPT, buildCoachContext, type CoachData } from "./coach";
+import {
+  DEFAULT_NOTIFICATION_CONFIG,
+  NOTIFICATION_TYPES,
+  dueNotifications,
+  localParts,
+  sendWebPush,
+  type NotificationConfig,
+  type NotificationType,
+  type PushSub,
+  type VapidKeys,
+} from "./push";
+
+/** Minimal structural types for the AI / R2 bindings (keeps tests able to
+ *  inject stubs without the full workers-types surface). */
+export interface AiBinding {
+  run: (model: string, input: unknown) => Promise<unknown>;
+}
+export interface MediaBucket {
+  get: (key: string) => Promise<{ body: ReadableStream; httpMetadata?: { contentType?: string } } | null>;
+  put: (key: string, value: ArrayBuffer | ReadableStream, opts?: { httpMetadata?: { contentType?: string } }) => Promise<unknown>;
+  delete: (key: string) => Promise<unknown>;
+}
 
 export interface Env {
   DB: D1Database;
@@ -49,6 +85,12 @@ export interface Env {
   STRAVA_CLIENT_SECRET?: string;
   STRAVA_VERIFY_TOKEN?: string;
   TOKEN_ENC_KEY?: string;
+  AI?: AiBinding;
+  MEDIA?: MediaBucket;
+  VAPID_PUBLIC_KEY?: string;
+  VAPID_PRIVATE_KEY?: string;
+  VAPID_SUBJECT?: string;
+  COACH_MODEL?: string;
 }
 
 const app = new Hono<{ Bindings: Env }>();
@@ -74,7 +116,7 @@ app.use("*", async (c, next) => {
 /** Owner lock: Cloudflare Access injects the authenticated email header.
  *  When present it must be the owner; Access itself blocks everyone else at
  *  the edge (unauthenticated requests never reach this Worker). */
-const TOKEN_GATED_PREFIXES = ["/api/import/", "/api/export/health-writeback", "/api/webhooks/"];
+const TOKEN_GATED_PREFIXES = ["/api/import/", "/api/export/health-writeback", "/api/webhooks/", "/api/watch/"];
 app.use("/api/*", async (c, next) => {
   const path = new URL(c.req.url).pathname;
   // Import / write-back / webhook lanes authenticate with their own tokens
@@ -132,7 +174,25 @@ async function todayData(db: D1Database): Promise<TodayData> {
     baseline = rest[Math.floor(rest.length / 2)];
   }
   const s = scores(latest as Row | null, baseline);
-  return { battery: s.battery, stress: s.stress, pressure: s.pressure, latest, history };
+  // Rule-based insights (D5) over the same stored data the Lab uses.
+  const asc = (await all(
+    db,
+    "SELECT taken_at, rmssd_ms, baevsky_si, lf_hf_ratio, source FROM measurements ORDER BY taken_at ASC LIMIT 1000",
+  )) as unknown as MeasurementLike[];
+  const sleepRows = await all(db, "SELECT end_at, duration_s FROM sleep LIMIT 500");
+  const stepRows = await all(db, "SELECT type, value, start_at FROM health_samples WHERE type = 'step_count' LIMIT 2000");
+  const journalRows = await all(db, "SELECT created_at, mood, tags_json FROM journal LIMIT 500");
+  const breathingRows = await all(db, "SELECT taken_at FROM breathing_sessions LIMIT 500");
+  const days = buildLabDays(
+    asc,
+    sleepRows as unknown as Array<{ end_at: string; duration_s: number }>,
+    stepRows as unknown as Array<{ type: string; value: number | null; start_at: string }>,
+    journalRows as unknown as Array<{ created_at: string; mood: number; tags_json: string }>,
+  );
+  const insights = generateInsights(days, new Date().toISOString(), new Set(breathingRows.map((b) => String(b.taken_at).slice(0, 10))));
+  const onboardedRow = await first(db, "SELECT value_json FROM settings WHERE key = ?", "onboarded");
+  const showWelcome = !history.length && !(onboardedRow && String(onboardedRow.value_json) === "1");
+  return { battery: s.battery, stress: s.stress, pressure: s.pressure, latest, history, insights, showWelcome };
 }
 
 // ---------------------------------------------------------------- pages
@@ -145,6 +205,19 @@ app.get("/battery", (c) => c.html(scoreDetailPage("battery", c.env.GIT_SHA ?? ""
 app.get("/stress", (c) => c.html(scoreDetailPage("stress", c.env.GIT_SHA ?? "")));
 app.get("/pressure", (c) => c.html(scoreDetailPage("pressure", c.env.GIT_SHA ?? "")));
 app.get("/impact", (c) => c.html(impactPage(c.env.GIT_SHA ?? "")));
+app.get("/sleep", (c) => c.html(sleepPage(c.env.GIT_SHA ?? "")));
+app.get("/mydata/:category", (c) => {
+  const def = categoryDefs().find((d) => d.key === c.req.param("category"));
+  if (!def) return c.html(layout("", "Not found", `<div class="card"><h2>Unknown category</h2><p><a href="/mydata"><button>Back to My Data</button></a></p></div>`, c.env.GIT_SHA ?? ""), 404);
+  return c.html(categoryPage(def.key, def.title, c.env.GIT_SHA ?? ""));
+});
+app.get("/lab", (c) => c.html(labPage(c.env.GIT_SHA ?? "")));
+app.get("/coach", (c) => c.html(coachPage(c.env.GIT_SHA ?? "")));
+app.get("/stories", (c) => c.html(storiesPage(c.env.GIT_SHA ?? "")));
+app.get("/welcome", (c) => c.html(welcomePage(c.env.GIT_SHA ?? "")));
+app.get("/tests", (c) => c.html(testsPage(c.env.GIT_SHA ?? "")));
+app.get("/themes", (c) => c.html(themesPage(c.env.GIT_SHA ?? "")));
+app.get("/about", (c) => c.html(aboutPage(c.env.GIT_SHA ?? "")));
 
 // ---------------------------------------------------------------- PWA assets
 app.get("/manifest.webmanifest", (c) =>
@@ -283,12 +356,19 @@ app.get("/api/journal", async (c) => {
   });
 });
 app.post("/api/journal", async (c) => {
-  const body = (await c.req.json().catch(() => ({}))) as { body?: string; mood?: number; tags?: string[] };
-  if (!body.body?.trim()) return c.json({ ok: false, error: "body required" }, 400);
+  const body = (await c.req.json().catch(() => ({}))) as { body?: string; mood?: number; tags?: string[]; voice_note_id?: number | string | null };
+  if (!body.body?.trim() && !body.voice_note_id) return c.json({ ok: false, error: "body required" }, 400);
   const info = await c.env.DB.prepare(
-    "INSERT INTO journal (owner, created_at, body, mood, tags_json) VALUES (?, ?, ?, ?, ?)",
+    "INSERT INTO journal (owner, created_at, body, mood, tags_json, voice_note_id) VALUES (?, ?, ?, ?, ?, ?)",
   )
-    .bind(c.env.OWNER_EMAIL, new Date().toISOString(), body.body, Math.min(10, Math.max(1, body.mood ?? 5)), JSON.stringify(body.tags ?? []))
+    .bind(
+      c.env.OWNER_EMAIL,
+      new Date().toISOString(),
+      body.body ?? "",
+      Math.min(10, Math.max(1, body.mood ?? 5)),
+      JSON.stringify(body.tags ?? []),
+      body.voice_note_id !== undefined && body.voice_note_id !== null ? String(body.voice_note_id) : null,
+    )
     .run();
   return c.json({ ok: true, id: info.meta.last_row_id });
 });
@@ -364,6 +444,37 @@ app.get("/api/scores", async (c) => {
   });
 });
 
+async function computeImpacts(db: D1Database): Promise<FactorImpact[]> {
+  const rows = (await all(
+    db,
+    "SELECT taken_at, rmssd_ms, baevsky_si, lf_hf_ratio FROM measurements ORDER BY taken_at ASC LIMIT 1000",
+  )) as unknown as MeasurementLike[];
+  const days = dailyAggregates(rows);
+  const factors: Array<{ name: string; dates: Set<string> }> = [];
+  const journal = await all(db, "SELECT created_at, tags_json FROM journal LIMIT 500");
+  const tagDates = new Map<string, Set<string>>();
+  for (const j of journal) {
+    const date = String(j.created_at).slice(0, 10);
+    for (const t of JSON.parse(String(j.tags_json ?? "[]")) as string[]) {
+      if (!tagDates.has(t)) tagDates.set(t, new Set());
+      tagDates.get(t)!.add(date);
+    }
+  }
+  for (const [name, dates] of tagDates) factors.push({ name: `tag: ${name}`, dates });
+  const sleepRows = await all(db, "SELECT end_at, duration_s FROM sleep LIMIT 500");
+  const goodSleep = new Set<string>();
+  const shortSleep = new Set<string>();
+  for (const s of sleepRows) {
+    const d = String(s.end_at).slice(0, 10);
+    const hrs = Number(s.duration_s) / 3600;
+    if (hrs >= 7) goodSleep.add(d);
+    if (hrs > 0 && hrs < 6) shortSleep.add(d);
+  }
+  if (goodSleep.size) factors.push({ name: "Sleep 7h+", dates: goodSleep });
+  if (shortSleep.size) factors.push({ name: "Short sleep (<6h)", dates: shortSleep });
+  return factorImpact(days, factors);
+}
+
 app.get("/api/impact", async (c) => {
   const rows = (await all(
     c.env.DB,
@@ -393,6 +504,511 @@ app.get("/api/impact", async (c) => {
   if (goodSleep.size) factors.push({ name: "Sleep 7h+", dates: goodSleep });
   if (shortSleep.size) factors.push({ name: "Short sleep (<6h)", dates: shortSleep });
   return c.json({ ok: true, days: days.length, impacts: factorImpact(days, factors) });
+});
+
+// ---------------------------------------------------------------- wave 2: sleep, categories, lab, coach, voice, tests, settings
+app.get("/api/sleep", async (c) => {
+  const rows = await all(c.env.DB, "SELECT id, start_at, end_at, duration_s, source, stages_json FROM sleep ORDER BY end_at DESC LIMIT 120");
+  const stageSamples = await all(
+    c.env.DB,
+    "SELECT start_at, value, unit, meta_json FROM health_samples WHERE type = ? ORDER BY start_at DESC LIMIT 2000",
+    "sleep_analysis",
+  );
+  const summary = summarizeSleep(
+    rows as unknown as Array<{ start_at: string; end_at: string; duration_s: number; source: string; stages_json?: string }>,
+    8,
+    stageSamples as unknown as Array<{ start_at: string; value: number | null; unit: string; meta_json?: string }>,
+  );
+  return c.json({ ok: true, summary });
+});
+
+app.get("/api/mydata/categories", async (c) => {
+  const samples = await all(c.env.DB, "SELECT type, value, unit, start_at, source FROM health_samples ORDER BY start_at DESC LIMIT 10000");
+  const typed = samples as unknown as Array<{ type: string; value: number | null; unit: string; start_at: string; source: string }>;
+  return c.json({
+    ok: true,
+    categories: summarizeCategories(typed, new Date().toISOString()),
+    bpReadings: bloodPressureReadings(typed),
+    recentSamples: typed.slice(0, 200),
+  });
+});
+
+async function labDays(db: D1Database) {
+  const asc = (await all(
+    db,
+    "SELECT taken_at, rmssd_ms, baevsky_si, lf_hf_ratio, source FROM measurements ORDER BY taken_at ASC LIMIT 1000",
+  )) as unknown as MeasurementLike[];
+  const sleepRows = await all(db, "SELECT end_at, duration_s FROM sleep LIMIT 500");
+  const stepRows = await all(db, "SELECT type, value, start_at FROM health_samples WHERE type = 'step_count' LIMIT 2000");
+  const journalRows = await all(db, "SELECT created_at, mood, tags_json FROM journal LIMIT 500");
+  return buildLabDays(
+    asc,
+    sleepRows as unknown as Array<{ end_at: string; duration_s: number }>,
+    stepRows as unknown as Array<{ type: string; value: number | null; start_at: string }>,
+    journalRows as unknown as Array<{ created_at: string; mood: number; tags_json: string }>,
+  );
+}
+
+app.get("/api/lab", async (c) => {
+  const days = await labDays(c.env.DB);
+  const labels: Record<string, string> = {};
+  for (const k of ["rmssd", "battery", "stress", "pressure", "sleepHours", "steps", "mood"]) labels[k] = labSeriesLabel(k);
+  const tags = new Set<string>();
+  for (const d of days) for (const t of d.tags) tags.add(t);
+  const enriched = days.map((d) => {
+    const rec: Record<string, unknown> = { ...d };
+    for (const t of tags) {
+      labels[`tag:${t}`] = `tag: ${t}`;
+      rec[`tag:${t}`] = d.tags.includes(t) ? 1 : 0;
+    }
+    return rec;
+  });
+  return c.json({ ok: true, days: enriched, correlations: correlationPairs(days), labels });
+});
+
+async function getFlags(db: D1Database, owner: string): Promise<Record<string, boolean>> {
+  const defaults: Record<string, boolean> = { ai_coach: true, science_lab: true, stories: true };
+  const raw = await getSetting(db, owner, "feature_flags");
+  if (raw) {
+    try {
+      return { ...defaults, ...(JSON.parse(raw) as Record<string, boolean>) };
+    } catch {
+      return defaults;
+    }
+  }
+  return defaults;
+}
+
+app.post("/api/coach", async (c) => {
+  const flags = await getFlags(c.env.DB, c.env.OWNER_EMAIL);
+  if (!flags.ai_coach) return c.json({ ok: false, error: "AI Coach is turned off in More → Feature flags." }, 403);
+  if (!c.env.AI) return c.json({ ok: false, error: "AI Coach unavailable — the Workers AI binding is not configured on this instance." }, 503);
+  const body = (await c.req.json().catch(() => ({}))) as { message?: string; history?: Array<{ role: string; content: string }> };
+  if (!body.message?.trim()) return c.json({ ok: false, error: "message required" }, 400);
+  const td = await todayData(c.env.DB);
+  const days = await labDays(c.env.DB);
+  const sleepRows = await all(c.env.DB, "SELECT start_at, end_at, duration_s, source FROM sleep ORDER BY end_at DESC LIMIT 60");
+  const sleepSummary = summarizeSleep(
+    sleepRows as unknown as Array<{ start_at: string; end_at: string; duration_s: number; source: string }>,
+    8,
+  );
+  const count = async (t: string): Promise<number> => Number((await first(c.env.DB, `SELECT COUNT(*) AS n FROM ${t}`))?.n ?? 0);
+  const journalRows = await all(c.env.DB, "SELECT created_at, mood FROM journal ORDER BY created_at DESC LIMIT 14");
+  const data: CoachData = {
+    battery: td.battery,
+    stress: td.stress,
+    pressure: td.pressure,
+    latestMeasurement: td.latest
+      ? {
+          taken_at: String(td.latest.taken_at),
+          mean_hr_bpm: Number(td.latest.mean_hr_bpm),
+          rmssd_ms: Number(td.latest.rmssd_ms),
+          sdnn_ms: Number(td.latest.sdnn_ms),
+          source: String(td.latest.source),
+        }
+      : null,
+    days: days.slice(-21),
+    sleepMedianH: sleepSummary.medianHours,
+    sleepLastH: sleepSummary.lastNight?.hours ?? null,
+    impacts: await computeImpacts(c.env.DB),
+    recentMoods: journalRows.map((j) => ({ date: String(j.created_at).slice(0, 10), mood: Number(j.mood) })),
+    counts: {
+      measurements: await count("measurements"),
+      sleep: await count("sleep"),
+      journal: await count("journal"),
+      breathing: await count("breathing_sessions"),
+      tests: await count("self_tests"),
+    },
+  };
+  const context = buildCoachContext(data);
+  const history = (body.history ?? [])
+    .filter((m) => (m.role === "user" || m.role === "assistant") && typeof m.content === "string")
+    .slice(-6);
+  try {
+    const out = (await c.env.AI.run(c.env.COACH_MODEL ?? "@cf/meta/llama-3.3-70b-instruct-fp8-fast", {
+      messages: [
+        { role: "system", content: `${COACH_SYSTEM_PROMPT}\n\n${context}` },
+        ...history,
+        { role: "user", content: body.message },
+      ],
+    })) as { response?: string };
+    const reply = typeof out?.response === "string" ? out.response.trim() : "";
+    if (!reply) return c.json({ ok: false, error: "The coach returned an empty answer — try again." }, 502);
+    return c.json({ ok: true, reply });
+  } catch (e) {
+    return c.json({ ok: false, error: `Workers AI call failed: ${e instanceof Error ? e.message : "unknown error"}` }, 502);
+  }
+});
+
+// --- voice comments (audio in R2, metadata in D1) ---
+function arrayBufferToBase64(buf: ArrayBuffer): string {
+  const bytes = new Uint8Array(buf);
+  let s = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(s);
+}
+
+app.post("/api/voice", async (c) => {
+  if (!c.env.MEDIA) return c.json({ ok: false, error: "Voice storage is not configured on this instance (R2 bucket missing)." }, 501);
+  const form = await c.req.formData().catch(() => null);
+  const f = form?.get("file");
+  if (!f || typeof f === "string") return c.json({ ok: false, error: "audio file required" }, 400);
+  const buf = await f.arrayBuffer();
+  if (buf.byteLength > 10 * 1024 * 1024) return c.json({ ok: false, error: "voice note too large (10 MB max)" }, 413);
+  const mime = f.type || "audio/webm";
+  const key = `voice/${Date.now()}-${crypto.randomUUID()}`;
+  await c.env.MEDIA.put(key, buf, { httpMetadata: { contentType: mime } });
+  const info = await c.env.DB.prepare("INSERT INTO voice_notes (owner, r2_key, mime, duration_s) VALUES (?, ?, ?, ?)")
+    .bind(c.env.OWNER_EMAIL, key, mime, Number(form?.get("duration_s") ?? 0) || 0)
+    .run();
+  const id = info.meta.last_row_id;
+  let transcript: string | null = null;
+  if (c.env.AI) {
+    try {
+      const out = (await c.env.AI.run("@cf/openai/whisper-large-v3-turbo", { audio: arrayBufferToBase64(buf) })) as { text?: string };
+      if (out?.text) {
+        transcript = out.text;
+        await c.env.DB.prepare("UPDATE voice_notes SET transcript = ? WHERE id = ?").bind(transcript, id).run();
+      }
+    } catch {
+      transcript = null; // transcription is best-effort; the audio is the record
+    }
+  }
+  return c.json({ ok: true, id, transcript });
+});
+app.get("/api/voice", async (c) => {
+  const rows = await all(c.env.DB, "SELECT id, mime, duration_s, transcript, created_at FROM voice_notes ORDER BY created_at DESC LIMIT 50");
+  return c.json({ ok: true, notes: rows });
+});
+app.get("/api/voice/:id/audio", async (c) => {
+  if (!c.env.MEDIA) return c.json({ ok: false, error: "media not configured" }, 501);
+  const row = await first(c.env.DB, "SELECT r2_key, mime FROM voice_notes WHERE id = ?", Number(c.req.param("id")));
+  if (!row) return c.json({ ok: false, error: "not found" }, 404);
+  const obj = await c.env.MEDIA.get(String(row.r2_key));
+  if (!obj) return c.json({ ok: false, error: "audio missing" }, 404);
+  return new Response(obj.body, { headers: { "content-type": String(row.mime) || "audio/webm" } });
+});
+app.delete("/api/voice/:id", async (c) => {
+  const row = await first(c.env.DB, "SELECT r2_key FROM voice_notes WHERE id = ?", Number(c.req.param("id")));
+  if (row && c.env.MEDIA) await c.env.MEDIA.delete(String(row.r2_key)).catch(() => {});
+  await c.env.DB.prepare("DELETE FROM voice_notes WHERE id = ?").bind(Number(c.req.param("id"))).run();
+  return c.json({ ok: true });
+});
+
+// --- self-tests (Self-Discovery set) ---
+const SELF_TEST_TYPES = ["reaction_time", "finger_tapping", "breath_hold", "orthostatic", "hrv_episode"];
+app.post("/api/self-tests", async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as { test_type?: string; result?: Record<string, unknown> };
+  if (!body.test_type || !SELF_TEST_TYPES.includes(body.test_type)) {
+    return c.json({ ok: false, error: `test_type must be one of ${SELF_TEST_TYPES.join(", ")}` }, 400);
+  }
+  if (!body.result || typeof body.result !== "object") return c.json({ ok: false, error: "result object required" }, 400);
+  const info = await c.env.DB.prepare("INSERT INTO self_tests (owner, taken_at, test_type, result_json) VALUES (?, ?, ?, ?)")
+    .bind(c.env.OWNER_EMAIL, new Date().toISOString(), body.test_type, JSON.stringify(body.result))
+    .run();
+  return c.json({ ok: true, id: info.meta.last_row_id });
+});
+app.get("/api/self-tests", async (c) => {
+  const type = c.req.query("type");
+  const limit = Math.min(100, Math.max(1, Number(c.req.query("limit") ?? 30)));
+  const rows = type
+    ? await all(c.env.DB, "SELECT * FROM self_tests WHERE test_type = ? ORDER BY taken_at DESC LIMIT ?", type, limit)
+    : await all(c.env.DB, "SELECT * FROM self_tests ORDER BY taken_at DESC LIMIT ?", limit);
+  return c.json({
+    ok: true,
+    tests: rows.map((r) => ({ ...r, result: JSON.parse(String(r.result_json ?? "{}")) as Record<string, unknown> })),
+  });
+});
+
+// --- settings: flags, theme, onboarding, feedback ---
+app.get("/api/settings/flags", async (c) => c.json({ ok: true, flags: await getFlags(c.env.DB, c.env.OWNER_EMAIL) }));
+app.post("/api/settings/flags", async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
+  const flags = await getFlags(c.env.DB, c.env.OWNER_EMAIL);
+  for (const k of ["ai_coach", "science_lab", "stories"]) if (typeof body[k] === "boolean") flags[k] = body[k] as boolean;
+  await setSetting(c.env.DB, c.env.OWNER_EMAIL, "feature_flags", JSON.stringify(flags));
+  return c.json({ ok: true, flags });
+});
+app.post("/api/settings/theme", async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as { theme?: string };
+  if (body.theme) await setSetting(c.env.DB, c.env.OWNER_EMAIL, "theme", String(body.theme));
+  return c.json({ ok: true });
+});
+app.get("/api/settings/onboarded", async (c) => {
+  const v = await getSetting(c.env.DB, c.env.OWNER_EMAIL, "onboarded");
+  return c.json({ ok: true, onboarded: v === "1" });
+});
+app.post("/api/settings/onboarded", async (c) => {
+  await setSetting(c.env.DB, c.env.OWNER_EMAIL, "onboarded", "1");
+  return c.json({ ok: true });
+});
+app.post("/api/feedback", async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as { text?: string };
+  if (!body.text?.trim()) return c.json({ ok: false, error: "text required" }, 400);
+  await c.env.DB.prepare("INSERT INTO events (owner, kind, detail_json) VALUES (?, 'feedback', ?)")
+    .bind(c.env.OWNER_EMAIL, JSON.stringify({ text: body.text.slice(0, 4000) }))
+    .run();
+  return c.json({ ok: true });
+});
+
+// --- delete my data (profile/settings row 47) ---
+app.post("/api/account/delete", async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as { confirm?: string };
+  if (body.confirm !== "DELETE") return c.json({ ok: false, error: "confirm must be the exact string DELETE" }, 400);
+  const owner = c.env.OWNER_EMAIL;
+  const deleted: Record<string, number> = {};
+  const voices = await all(c.env.DB, "SELECT r2_key FROM voice_notes WHERE owner = ?", owner);
+  if (c.env.MEDIA) {
+    for (const v of voices) await c.env.MEDIA.delete(String(v.r2_key)).catch(() => {});
+  }
+  const measurementIds = await all(c.env.DB, "SELECT id FROM measurements WHERE owner = ?", owner);
+  for (const m of measurementIds) {
+    await c.env.DB.prepare("DELETE FROM rr_series WHERE measurement_id = ?").bind(Number(m.id)).run();
+  }
+  for (const t of [
+    "measurements",
+    "sleep",
+    "journal",
+    "breathing_sessions",
+    "self_tests",
+    "health_samples",
+    "push_subscriptions",
+    "notification_prefs",
+    "notification_log",
+    "voice_notes",
+    "strava_tokens",
+    "settings",
+    "events",
+  ]) {
+    const r = await c.env.DB.prepare(`DELETE FROM ${t} WHERE owner = ?`).bind(owner).run();
+    deleted[t] = r.meta.changes ?? 0;
+  }
+  return c.json({ ok: true, deleted });
+});
+
+// ---------------------------------------------------------------- push + notifications (D6)
+function vapidKeys(env: Env): VapidKeys | null {
+  if (!env.VAPID_PUBLIC_KEY || !env.VAPID_PRIVATE_KEY || !env.VAPID_SUBJECT) return null;
+  return { publicKey: env.VAPID_PUBLIC_KEY, privateKey: env.VAPID_PRIVATE_KEY, subject: env.VAPID_SUBJECT };
+}
+
+async function loadNotificationConfig(db: D1Database, owner: string): Promise<NotificationConfig> {
+  const cfg: NotificationConfig = JSON.parse(JSON.stringify(DEFAULT_NOTIFICATION_CONFIG)) as NotificationConfig;
+  const rows = await all(db, "SELECT type, enabled FROM notification_prefs WHERE owner = ?", owner);
+  for (const r of rows) {
+    const t = String(r.type) as NotificationType;
+    if (t in cfg.enabled) cfg.enabled[t] = Number(r.enabled) === 1;
+  }
+  const raw = await getSetting(db, owner, "notification_config");
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw) as { times?: Record<string, string>; timeZone?: string };
+      if (parsed.times) cfg.times = { ...cfg.times, ...parsed.times };
+      if (parsed.timeZone) cfg.timeZone = parsed.timeZone;
+    } catch {
+      /* keep defaults */
+    }
+  }
+  return cfg;
+}
+
+async function dispatchNotification(
+  env: Env,
+  type: string,
+  title: string,
+  body: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<Array<{ endpoint_host: string; status: string; http_status: number | null }>> {
+  const keys = vapidKeys(env);
+  const results: Array<{ endpoint_host: string; status: string; http_status: number | null }> = [];
+  if (!keys) return results;
+  const subs = await all(env.DB, "SELECT endpoint, keys_json FROM push_subscriptions WHERE owner = ?", env.OWNER_EMAIL);
+  const payload = JSON.stringify({ title, body, url: "/", type });
+  for (const s of subs) {
+    const endpoint = String(s.endpoint);
+    let host = "";
+    try {
+      host = new URL(endpoint).host;
+    } catch {
+      host = "";
+    }
+    let status = "failed";
+    let httpStatus: number | null = null;
+    let detail = "";
+    try {
+      const kj = JSON.parse(String(s.keys_json)) as { p256dh: string; auth: string };
+      const res = await sendWebPush(keys, { endpoint, p256dh: kj.p256dh, auth: kj.auth }, payload, fetchImpl);
+      httpStatus = res.status;
+      detail = `push service HTTP ${res.status}`;
+      if (res.ok) status = "sent";
+      else if (res.status === 404 || res.status === 410) {
+        status = "gone";
+        await env.DB.prepare("DELETE FROM push_subscriptions WHERE endpoint = ?").bind(endpoint).run();
+      }
+    } catch (e) {
+      detail = e instanceof Error ? e.message : "send error";
+    }
+    try {
+      await env.DB
+        .prepare("INSERT INTO notification_log (owner, at, type, title, body, endpoint_host, status, http_status, detail) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        .bind(env.OWNER_EMAIL, new Date().toISOString(), type, title, body, host, status, httpStatus, detail)
+        .run();
+    } catch {
+      /* log table missing in unit envs — dispatch result still returned */
+    }
+    results.push({ endpoint_host: host, status, http_status: httpStatus });
+  }
+  return results;
+}
+
+/** The cron entry: evaluate the notification rules and dispatch what's due. */
+export async function runScheduled(env: Env, fetchImpl: typeof fetch = fetch): Promise<{ due: string[]; sent: number }> {
+  const owner = env.OWNER_EMAIL;
+  const keys = vapidKeys(env);
+  const cfg = await loadNotificationConfig(env.DB, owner);
+  const subs = await all(env.DB, "SELECT endpoint FROM push_subscriptions WHERE owner = ?", owner);
+  if (!keys || !subs.length) {
+    console.log(JSON.stringify({ evt: "scheduled_skip", reason: !keys ? "vapid_not_configured" : "no_subscriptions" }));
+    return { due: [], sent: 0 };
+  }
+  const now = new Date();
+  const { date: localDate, minutes } = localParts(now, cfg.timeZone);
+  const localDateOf = (iso: string): string => localParts(new Date(iso), cfg.timeZone).date;
+  const measurements = (await all(
+    env.DB,
+    "SELECT taken_at, rmssd_ms, baevsky_si, lf_hf_ratio FROM measurements ORDER BY taken_at ASC LIMIT 1000",
+  )) as unknown as MeasurementLike[];
+  const scored = scoreSeries(measurements);
+  const todays = scored.filter((p) => localDateOf(p.at) === localDate);
+  const latestToday = todays[todays.length - 1] ?? null;
+  const breathing = await all(env.DB, "SELECT taken_at FROM breathing_sessions ORDER BY taken_at DESC LIMIT 100");
+  const hasBreathingToday = breathing.some((b) => localDateOf(String(b.taken_at)) === localDate);
+  const logRows = await all(env.DB, "SELECT type, at, status FROM notification_log WHERE owner = ? ORDER BY at DESC LIMIT 100", owner);
+  const sentToday = new Set(
+    logRows.filter((r) => String(r.status) === "sent" && localDateOf(String(r.at)) === localDate).map((r) => String(r.type)),
+  ) as Set<NotificationType>;
+  const lastLow = logRows.find((r) => String(r.type) === "low_battery" && String(r.status) === "sent");
+  const due = dueNotifications(cfg, {
+    localDate,
+    localMinutes: minutes,
+    hasMeasurementToday: todays.length > 0,
+    hasBreathingToday,
+    battery: latestToday?.battery ?? null,
+    batteryAt: latestToday?.at ?? null,
+    stress: latestToday?.stress ?? null,
+    sentToday,
+    lastLowBatteryAt: lastLow ? String(lastLow.at) : null,
+    nowIso: now.toISOString(),
+  });
+  let sent = 0;
+  for (const n of due) {
+    const res = await dispatchNotification(env, n.type, n.title, n.body, fetchImpl);
+    sent += res.filter((r) => r.status === "sent").length;
+  }
+  console.log(JSON.stringify({ evt: "scheduled_notifications", due: due.map((d) => d.type), sent }));
+  return { due: due.map((d) => d.type), sent };
+}
+
+app.get("/api/push/vapid-public-key", (c) => {
+  const keys = vapidKeys(c.env);
+  return c.json(keys ? { ok: true, configured: true, publicKey: keys.publicKey } : { ok: true, configured: false });
+});
+app.post("/api/push/subscribe", async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as {
+    subscription?: { endpoint?: string; keys?: { p256dh?: string; auth?: string } };
+    endpoint?: string;
+    keys?: { p256dh?: string; auth?: string };
+    p256dh?: string;
+    auth?: string;
+  };
+  const sub = body.subscription ?? body;
+  const endpoint = sub.endpoint ?? "";
+  const p256dh = sub.keys?.p256dh ?? body.p256dh ?? "";
+  const auth = sub.keys?.auth ?? body.auth ?? "";
+  if (!endpoint.startsWith("https://") || !p256dh || !auth) {
+    return c.json({ ok: false, error: "subscription endpoint + keys.p256dh + keys.auth required" }, 400);
+  }
+  await c.env.DB.prepare(
+    "INSERT INTO push_subscriptions (owner, endpoint, keys_json) VALUES (?, ?, ?) ON CONFLICT(endpoint) DO UPDATE SET owner = excluded.owner, keys_json = excluded.keys_json",
+  )
+    .bind(c.env.OWNER_EMAIL, endpoint, JSON.stringify({ p256dh, auth }))
+    .run();
+  return c.json({ ok: true });
+});
+app.delete("/api/push/subscribe", async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as { endpoint?: string };
+  if (!body.endpoint) return c.json({ ok: false, error: "endpoint required" }, 400);
+  await c.env.DB.prepare("DELETE FROM push_subscriptions WHERE endpoint = ?").bind(body.endpoint).run();
+  return c.json({ ok: true });
+});
+app.get("/api/push/subscriptions", async (c) => {
+  const rows = await all(c.env.DB, "SELECT endpoint, created_at FROM push_subscriptions WHERE owner = ?", c.env.OWNER_EMAIL);
+  return c.json({
+    ok: true,
+    count: rows.length,
+    subscriptions: rows.map((r) => {
+      let host = "";
+      try {
+        host = new URL(String(r.endpoint)).host;
+      } catch {
+        host = "";
+      }
+      return { host, created_at: r.created_at };
+    }),
+  });
+});
+
+app.get("/api/notifications/config", async (c) => {
+  const cfg = await loadNotificationConfig(c.env.DB, c.env.OWNER_EMAIL);
+  return c.json({
+    ok: true,
+    timeZone: cfg.timeZone,
+    types: NOTIFICATION_TYPES.map((t) => ({ type: t.type, label: t.label, enabled: cfg.enabled[t.type], time: cfg.times[t.type] ?? "" })),
+  });
+});
+app.post("/api/notifications/config", async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as { type?: string; enabled?: boolean; time?: string; timeZone?: string };
+  const cfg = await loadNotificationConfig(c.env.DB, c.env.OWNER_EMAIL);
+  if (body.type && NOTIFICATION_TYPES.some((t) => t.type === body.type)) {
+    const type = body.type as NotificationType;
+    if (typeof body.enabled === "boolean") {
+      await c.env.DB
+        .prepare("INSERT INTO notification_prefs (owner, type, enabled) VALUES (?, ?, ?) ON CONFLICT(owner, type) DO UPDATE SET enabled = excluded.enabled")
+        .bind(c.env.OWNER_EMAIL, type, body.enabled ? 1 : 0)
+        .run();
+      cfg.enabled[type] = body.enabled;
+    }
+    if (typeof body.time === "string" && /^\d{1,2}:\d{2}$/.test(body.time)) cfg.times[type] = body.time;
+  }
+  if (typeof body.timeZone === "string" && body.timeZone) cfg.timeZone = body.timeZone;
+  await setSetting(c.env.DB, c.env.OWNER_EMAIL, "notification_config", JSON.stringify({ times: cfg.times, timeZone: cfg.timeZone }));
+  return c.json({ ok: true, timeZone: cfg.timeZone, types: NOTIFICATION_TYPES.map((t) => ({ type: t.type, label: t.label, enabled: cfg.enabled[t.type], time: cfg.times[t.type] ?? "" })) });
+});
+app.post("/api/notifications/test", async (c) => {
+  if (!vapidKeys(c.env)) return c.json({ ok: false, error: "Push is not configured on this instance (VAPID secrets missing)." }, 400);
+  const subs = await all(c.env.DB, "SELECT endpoint FROM push_subscriptions WHERE owner = ?", c.env.OWNER_EMAIL);
+  if (!subs.length) return c.json({ ok: false, error: "No push subscription yet — enable notifications on a device first (More → Notifications)." }, 400);
+  const results = await dispatchNotification(c.env, "test", "OpenHRV test notification", "Push is working — this is your test notification from OpenHRV.");
+  return c.json({ ok: true, results });
+});
+app.get("/api/notifications/log", async (c) => {
+  const rows = await all(c.env.DB, "SELECT at, type, title, endpoint_host, status, http_status, detail FROM notification_log WHERE owner = ? ORDER BY at DESC LIMIT 30", c.env.OWNER_EMAIL);
+  return c.json({ ok: true, log: rows });
+});
+
+// --- Watch companion lanes (D7): the watch app holds no Access session, so
+// it authenticates with the same per-owner import token as the phone lanes. ---
+app.get("/api/watch/today", async (c) => {
+  if (!(await verifyImportToken(c))) return c.json({ ok: false, error: "bad import token" }, 401);
+  const td = await todayData(c.env.DB);
+  return c.json({ ok: true, battery: td.battery, stress: td.stress, pressure: td.pressure, latest: td.latest });
+});
+app.post("/api/watch/measurements", async (c) => {
+  if (!(await verifyImportToken(c))) return c.json({ ok: false, error: "bad import token" }, 401);
+  const body = (await c.req.json().catch(() => ({}))) as { rr_ms?: number[]; rr_text?: string; source?: string };
+  const rr = Array.isArray(body.rr_ms) ? body.rr_ms : body.rr_text ? parseRrText(body.rr_text) : [];
+  if (!rr.length) return c.json({ ok: false, error: "rr_ms array or rr_text required" }, 400);
+  return storeMeasurement(c, rr, body.source ?? "watch");
 });
 
 // ---------------------------------------------------------------- connectors (D4/D9)
@@ -654,4 +1270,12 @@ app.notFound((c) => {
   return c.html(layout("", "OpenHRV", `<div class="card"><h2>Not found</h2><p class="sub">That page does not exist.</p><p><a href="/"><button>Go to Today</button></a></p></div>`, c.env.GIT_SHA ?? ""), 404);
 });
 
-export default app;
+export { app };
+
+/** Worker entry: Hono fetch handler + the D6 cron scheduler. */
+export default {
+  fetch: app.fetch,
+  scheduled: (_event: unknown, env: Env, ctx: { waitUntil: (p: Promise<unknown>) => void }): void => {
+    ctx.waitUntil(runScheduled(env));
+  },
+};
