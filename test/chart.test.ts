@@ -88,7 +88,7 @@ describe("series shaping", () => {
     ];
     const out = hourlyPoints(rows, "2026-11-03");
     expect(out.map((p) => p.v)).toEqual([55, 62]);
-    expect(out[0].label).toBe("07:00");
+    expect(out[0].label).toBe("7:00 AM");
   });
 
   it("dailyPoints aggregates sum-types and takes latest for gauges", () => {

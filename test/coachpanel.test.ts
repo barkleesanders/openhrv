@@ -48,10 +48,10 @@ describe("coach panel: drivers, actions, protective mode", () => {
     }));
     expect(panel.protective).toBe(false);
     expect(panel.drivers[0].text).toContain("Stationary stress 120 min");
-    expect(panel.drivers[0].text).toContain("13:00–15:00");
+    expect(panel.drivers[0].text).toContain("1:00 PM–3:00 PM");
     expect(panel.drivers.map((d) => d.text).join(" ")).toContain("Sleep debt 2 h");
     const acts = panel.actions.map((a) => a.text).join(" ");
-    expect(acts).toContain("lights-out by 21:10");
+    expect(acts).toContain("lights-out by 9:10 PM");
     expect(acts).toContain("10-minute walk");
     expect(panel.chips.map((c) => c.question)).toContain("Why is my stress up today?");
     expect(panel.chips.map((c) => c.question)).toContain("How do I repay my sleep debt?");

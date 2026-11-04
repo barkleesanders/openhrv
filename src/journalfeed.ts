@@ -8,6 +8,7 @@
  * Structure modeled on mainstream HRV journals; all values are the
  * owner's real stored data, computed upstream.
  */
+import { fmtTime12 } from "./timefmt";
 
 export interface FeedTrioDay {
   date: string;
@@ -100,7 +101,7 @@ export function feedDayLabel(dateStr: string): string {
 
 const timeLabel = (iso: string): string => {
   const t = String(iso).slice(11, 16);
-  return t || "";
+  return t ? fmtTime12(iso) : "";
 };
 
 /** Orb fill color for a day's charge (journal calendar strip). */

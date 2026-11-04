@@ -9,6 +9,7 @@
  */
 
 import type { ChartPoint } from "./chart";
+import { fmtHour12 } from "./timefmt";
 
 export interface SeriesRow {
   type: string;
@@ -55,8 +56,8 @@ export function hourlyPoints(rows: SeriesRow[], dateStr: string): ChartPoint[] {
       const hh = String(r.start_at).slice(11, 13);
       return {
         v: Number(r.value),
-        label: `${hh}:00`,
-        full: `${dayFull(dateStr)} · ${hh}:00 · ${Number(r.value)}`,
+        label: fmtHour12(Number(hh)),
+        full: `${dayFull(dateStr)} · ${fmtHour12(Number(hh))} · ${Number(r.value)}`,
       };
     });
 }

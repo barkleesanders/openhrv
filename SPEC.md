@@ -624,3 +624,22 @@ redirect. Section-order test updated to the new order. Full suite
   checks; coach check requires an Access service token in env and SKIPS
   LOUDLY without one). scripts/deploy.sh prints the smoke command after
   every deploy and runs it when SMOKE_* env is present.
+
+## Ship evidence — 2026-11-04 (12-hour display wave)
+
+Barklee's rule: every human-visible clock time in the UI is 12-hour
+("2:05 PM"); machine formats (ISO strings, API JSON, stored data,
+`<time datetime>`) are unchanged. Implementation: one central
+formatter, `src/timefmt.ts` (`fmtHour12` / `fmtHourMin12` /
+`fmtTime12`), called from every display site — hourly chart labels +
+readouts (`series.ts`), coach panel hour ranges / first-event /
+medical-block / lights-out strings (`coachpanel.ts`), journal feed
+times (`journalfeed.ts`), workout `whenLabel`, reports-preview peak
+text, heart-report segment labels + peak callout (`index.ts`), and
+the sleep page's client-side nights list (`views.ts` inline `t12`,
+same conversion). Push scheduling math (`push.ts` `localParts`,
+minutes-since-midnight) is not display and is untouched. Tests:
+`test/timefmt.test.ts` pins the formatter (midnight/noon edges,
+minute rollover) + the chart/coach label producers; the three suites
+that asserted 24-hour strings (chart, coachpanel, tapfix) now assert
+the 12-hour forms. 181/181 tests, `tsc` clean.

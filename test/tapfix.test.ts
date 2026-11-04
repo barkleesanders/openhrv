@@ -60,7 +60,7 @@ function chartPoints(html: string): Array<{ v: number; full: string }> {
 }
 const daySelected = (html: string): boolean => /range=day" class="on"/.test(html);
 const monthSelected = (html: string): boolean => /range=month" class="on"/.test(html);
-const hasHourLabels = (html: string): boolean => chartPoints(html).some((p) => /· \d{2}:00 ·/.test(p.full)) || />\d{2}:00<\/text>/.test(html);
+const hasHourLabels = (html: string): boolean => chartPoints(html).some((p) => /· \d{1,2}:00 [AP]M ·/.test(p.full)) || />\d{1,2}:00 [AP]M<\/text>/.test(html);
 
 describe("Phase A: home-card click-through lands hourly-first", () => {
   it("enumerates the six favorites and follows every href to an hourly-first landing", async () => {

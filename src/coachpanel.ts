@@ -8,6 +8,7 @@
  */
 import type { FactorImpact } from "./insights";
 import type { HourBucket, StressImpact } from "./reports";
+import { fmtHour12, fmtHourMin12, fmtTime12 } from "./timefmt";
 
 export interface CoachEvent {
   title: string;
@@ -73,7 +74,7 @@ export interface CoachPanel {
 const r0 = (v: number): number => Math.round(v);
 const r1 = (v: number): string => String(Math.round(v * 10) / 10);
 const pct = (v: number): string => `${v >= 0 ? "+" : ""}${r0(v)}%`;
-const hh = (h: number): string => `${String(h).padStart(2, "0")}:00`;
+const hh = (h: number): string => fmtHour12(h);
 
 /** Contiguous hour ranges from a predicate, formatted "13:00–15:00". */
 export function hourRanges(buckets: HourBucket[], pred: (b: HourBucket) => boolean): string[] {
@@ -172,24 +173,24 @@ export function buildCoachPanel(inp: CoachInput): CoachPanel {
   const briefTail: string[] = [];
   let scheduleLine: string | null = null;
   if (load.count > 0) {
-    scheduleLine = `Today's schedule: ${load.count} event${load.count === 1 ? "" : "s"}, ${r1(load.totalHours)} h booked${load.firstStart ? `, first at ${load.firstStart}` : ""}${load.beforeNoonHours > 0 ? ` (${r1(load.beforeNoonHours)} h before noon)` : ""}.`;
+    scheduleLine = `Today's schedule: ${load.count} event${load.count === 1 ? "" : "s"}, ${r1(load.totalHours)} h booked${load.firstStart ? `, first at ${fmtTime12(load.firstStart)}` : ""}${load.beforeNoonHours > 0 ? ` (${r1(load.beforeNoonHours)} h before noon)` : ""}.`;
     briefLines.push(scheduleLine);
     briefTail.push(scheduleLine);
     const med = inp.eventsToday.find((e) => isMedical(e.title));
     if (med) {
-      const line = `Includes a medical block: ${med.title} at ${med.start_at.slice(11, 16)} — plan a light morning around it.`;
+      const line = `Includes a medical block: ${med.title} at ${fmtTime12(med.start_at)} — plan a light morning around it.`;
       briefLines.push(line);
       briefTail.push(line);
     }
     if (load.earlyStart && inp.wakeTime) {
-      const line = `First event at ${load.firstStart} lands within 30 min of your ${inp.wakeTime} wake time — a tight start.`;
+      const line = `First event at ${fmtTime12(load.firstStart ?? "")} lands within 30 min of your ${fmtTime12(inp.wakeTime ?? "")} wake time — a tight start.`;
       briefLines.push(line);
       briefTail.push(line);
     }
   }
   const tomorrowLoad = scheduleLoad(inp.eventsTomorrow, null);
   if (tomorrowLoad.count > 0 && tomorrowLoad.firstStart) {
-    const line = `Tomorrow starts at ${tomorrowLoad.firstStart} (${tomorrowLoad.count} event${tomorrowLoad.count === 1 ? "" : "s"}, ${r1(tomorrowLoad.totalHours)} h booked).`;
+    const line = `Tomorrow starts at ${fmtTime12(tomorrowLoad.firstStart)} (${tomorrowLoad.count} event${tomorrowLoad.count === 1 ? "" : "s"}, ${r1(tomorrowLoad.totalHours)} h booked).`;
     briefLines.push(line);
     briefTail.push(line);
   }
@@ -295,7 +296,7 @@ export function buildCoachPanel(inp: CoachInput): CoachPanel {
       const need = Math.min(9.5, 8 + inp.sleepDebtH);
       const wakeMin = Number(inp.wakeTime.slice(0, 2)) * 60 + Number(inp.wakeTime.slice(3, 5));
       const outMin = ((wakeMin - Math.round(need * 60)) % 1440 + 1440) % 1440;
-      when = ` — lights-out by ${String(Math.floor(outMin / 60)).padStart(2, "0")}:${String(outMin % 60).padStart(2, "0")} repays it tonight`;
+      when = ` — lights-out by ${fmtHourMin12(Math.floor(outMin / 60), outMin % 60)} repays it tonight`;
     }
     actions.push({ text: `Sleep debt ${r1(inp.sleepDebtH)} h${when}.`, href: "/sleep" });
   }

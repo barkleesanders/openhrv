@@ -50,6 +50,7 @@ import {
   type MeasurementLike,
 } from "./insights";
 import { healthDays, type HealthDay } from "./healthdays";
+import { fmtHour12, fmtHourMin12, fmtTime12 } from "./timefmt";
 import {
   activityDay,
   ansBalance,
@@ -409,7 +410,7 @@ async function coachPanelFor(
     date,
     stressMinutes: impact?.stressMinutes ?? null,
     standHours,
-    heartPeakText: peakBucket ? `peak ${Math.round(peakBucket.hr as number)} bpm · ${String(peakBucket.hour).padStart(2, "0")}:00` : "—",
+    heartPeakText: peakBucket ? `peak ${Math.round(peakBucket.hr as number)} bpm · ${fmtHour12(peakBucket.hour)}` : "—",
   };
   return { panel, preview };
 }
@@ -1254,7 +1255,7 @@ async function workoutVm(db: D1Database, owner: string, id: number) {
     id,
     name: typeof meta.name === "string" && meta.name ? meta.name : "Workout",
     sport: typeof meta.sport === "string" ? meta.sport : typeof meta.type === "string" ? meta.type : "Workout",
-    whenLabel: `${dayFull(dateStr)} · ${String(row.start_at).slice(11, 16)}`,
+    whenLabel: `${dayFull(dateStr)} · ${fmtTime12(String(row.start_at))}`,
     source: String(row.source),
     stats,
     chartHtml,
@@ -2804,8 +2805,8 @@ app.get("/reports/heart", async (c) => {
   const truePeak = streamPeak && (!peak || streamPeak.hr > peak.hr) ? streamPeak : peak;
   const segPoints: SegPoint[] = points.map((p) => ({
     v: p.hr,
-    label: `${String(p.hour).padStart(2, "0")}:00`,
-    full: `${date} ${String(p.hour).padStart(2, "0")}:00 · ${p.hr} bpm · ${HEART_STATE_LABELS[p.state]}`,
+    label: fmtHour12(p.hour),
+    full: `${date} ${fmtHour12(p.hour)} · ${p.hr} bpm · ${HEART_STATE_LABELS[p.state]}`,
     seg: p.state,
   }));
   const stateHours = new Map<string, number>();
@@ -2824,7 +2825,7 @@ app.get("/reports/heart", async (c) => {
         nextDate: idx > 0 ? qualified[idx - 1] : null,
         chartHtml: segmentChart({ id: "heart-day", points: segPoints, unit: "bpm", yLabel: "Heart rate (bpm)", segColors: HEART_STATE_COLORS, segLabels: HEART_STATE_LABELS }),
         summary,
-        peakText: truePeak ? `${Math.round(truePeak.hr)} bpm · ${String(Math.floor(truePeak.hour)).padStart(2, "0")}:${String(Math.round((truePeak.hour % 1) * 60)).padStart(2, "0")}` : "—",
+        peakText: truePeak ? `${Math.round(truePeak.hr)} bpm · ${fmtHourMin12(Math.floor(truePeak.hour), Math.round((truePeak.hour % 1) * 60))}` : "—",
       },
       c.env.GIT_SHA ?? "",
     ),

@@ -862,12 +862,13 @@ export function sleepPage(sha = "", vm?: ChartPageVm & { stageHtml?: string; hou
 <script>
 fetch("/api/sleep").then(function(r){return r.json();}).then(function(j) {
   var s = j.summary;
+  function t12(iso) { var s2 = String(iso).slice(11, 16); if (!s2) return ""; var h = +s2.slice(0, 2), m = s2.slice(3, 5); var ap = h >= 12 ? "PM" : "AM"; h = h % 12 || 12; return h + ":" + m + " " + ap; }
   if (!s || !s.lastNight) { document.getElementById("lastsub").textContent = "No sleep recorded yet — import from Apple Health (Health Auto Export, a Shortcut, or export.xml) and your nights appear here."; document.getElementById("nights").innerHTML = ""; return; }
   var ln = s.lastNight;
   document.getElementById("last").textContent = ln.hours.toFixed(1) + " h";
   document.getElementById("lastsub").textContent = ln.date + " · debt " + ln.debtH.toFixed(1) + " h vs your " + s.targetH + " h target" + (ln.vsMedianPct !== null ? " · " + (ln.vsMedianPct >= 0 ? "+" : "") + ln.vsMedianPct + "% vs your median (" + s.medianHours + " h)" : "") + " · 7-night debt " + s.debt7dH + " h";
   document.getElementById("nights").innerHTML = s.nights.map(function(n) {
-    return "<div class='stat'><span>" + n.date + " · " + String(n.start_at).slice(11, 16) + "–" + String(n.end_at).slice(11, 16) + " · " + n.source + "</span><b>" + n.hours.toFixed(1) + " h</b></div>";
+    return "<div class='stat'><span>" + n.date + " · " + t12(n.start_at) + "–" + t12(n.end_at) + " · " + n.source + "</span><b>" + n.hours.toFixed(1) + " h</b></div>";
   }).join("");
 });
 </script>
