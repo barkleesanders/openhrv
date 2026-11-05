@@ -661,3 +661,21 @@ additionally retries a 5xx ask once, silently, after 1.2 s, so a
 rollout blip never reaches the user. Regression tests in
 test/coachfix.test.ts (binding-fault injection -> human 502 with no
 raw leak; page script carries the retry). 183/183 tests.
+
+## Ship evidence — 2026-11-04 (session-resilience wave)
+
+Barklee: the app "can't show the data right now." Production data and
+every read API were verified healthy at that moment; the failure was
+client-side. The Access session lasted 24h; when it lapsed, data
+fetches received the login page (non-JSON), pages called r.json(),
+threw, and sat on "Loading…" forever (the first coach incident's
+failure shape, still present on every other page). Fixes: (1) Access
+app session_duration 24h -> 720h (30 days, single-user app). (2) All
+data pages (Today helpers in layout, Sleep, My Data + category,
+Impact, score detail) now load via apiJson(), which detects the
+non-JSON/session case, and settle via apiFail() with the honest
+message and a one-tap sign-in/retry link — never a dead loader.
+(3) Service worker v2: purges the v1 cache on activate and caches
+only successful, non-redirected GET responses (a cached login page
+can no longer be served as app content). Tests:
+test/sessionresilience.test.ts; 187/187.

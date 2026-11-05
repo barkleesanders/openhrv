@@ -119,6 +119,25 @@ ${CHART_CSS}
 <script>
 try { var th = JSON.parse(localStorage.getItem("openhrv-theme") || "null"); if (th && th.acc) { document.documentElement.classList.add("themed"); document.documentElement.style.setProperty("--acc", th.acc); document.documentElement.style.setProperty("--card", th.card); document.documentElement.style.setProperty("--bg", th.bg); } } catch (e) {}
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(function(){});
+window.apiJson = function(url, opts) {
+  return fetch(url, opts).then(function(r) {
+    return r.text().then(function(t) {
+      var j = null; try { j = JSON.parse(t); } catch (e) {}
+      if (j === null) { var er = new Error("session-expired"); er.sessionExpired = true; throw er; }
+      if (!r.ok) { var e2 = new Error((j && j.error) || ("HTTP " + r.status)); e2.sessionExpired = (r.status === 401 || r.status === 403); throw e2; }
+      return j;
+    });
+  });
+};
+window.apiFail = function(id, e) {
+  var el = typeof id === "string" ? document.getElementById(id) : id;
+  if (!el) return;
+  if (e && e.sessionExpired) {
+    el.innerHTML = "<p class='sub'>Can\u2019t show the data right now \u2014 your sign-in session expired. <a href='/' style='color:var(--acc)'>Tap here to sign in again</a> and it will load.</p>";
+  } else {
+    el.innerHTML = "<p class='sub'>Can\u2019t show the data right now \u2014 the connection failed. <a href='' onclick='location.reload();return false;' style='color:var(--acc)'>Tap to retry</a>.</p>";
+  }
+};
 if (navigator.modelContext && navigator.modelContext.registerTool) {
   var tools = [
     { name: "openhrv_get_today", description: "Get today's Battery (readiness) and Pressure (stress) scores and latest HRV metrics.", inputSchema: { type: "object", properties: {} },
@@ -507,7 +526,7 @@ export function myDataPage(sha = ""): string {
      <div class="card"><h2>Import Apple Health</h2><p class="sub">Automated: Health Auto Export app → REST import. Also: iOS Shortcuts POST and export.xml upload — all set up in More → Settings &amp; connections, where your import token lives.</p><p><a href="/more#settings"><button class="ghost">Open import settings</button></a></p></div>
      <div class="card"><h2>Imported samples</h2><div id="samples"><p class="sub">Loading…</p></div></div>
 <script>
-fetch("/api/mydata/categories").then(function(r){return r.json();}).then(function(j) {
+apiJson("/api/mydata/categories").then(function(j) {
   var CHIP = {
     "health": ["#ff2d55", '${ICONS.heart}'],
     "activity": ["#34c759", '${ICONS.flame}'],
@@ -521,15 +540,15 @@ fetch("/api/mydata/categories").then(function(r){return r.json();}).then(functio
     var chip = CHIP[cat.key] || ["#8e8e93", '${ICONS.list}'];
     return "<a class='brow' href='/mydata/" + cat.key + "'><span class='chip' style='background:" + chip[0] + "'>" + chip[1] + "</span><span class='bname'>" + cat.title + "</span><span class='blat'>" + (lat || "no samples yet") + "</span><span class='chev'>" + CHEV + "</span></a>";
   }).join("");
-});
-fetch("/api/mydata").then(function(r){return r.json();}).then(function(j) {
+}).catch(function(e){ apiFail("cats", e); });
+apiJson("/api/mydata").then(function(j) {
   ["measurements","sleep","journal","breathing","tests"].forEach(function(k){ document.getElementById("c-" + k).textContent = j.counts[k]; });
-  fetch("/api/samples?limit=12").then(function(r){return r.json();}).then(function(s) {
+  apiJson("/api/samples?limit=12").then(function(s) {
     document.getElementById("samples").innerHTML = s.samples.length ? s.samples.map(function(x) {
       return "<div class='stat'><span>" + String(x.start_at).slice(0,16).replace("T"," ") + " · " + x.type + "</span><b>" + (x.value === null ? "" : Number(x.value).toFixed(1) + " " + x.unit) + " · " + x.source + "</b></div>";
     }).join("") : "<p class='sub'>No imported samples yet.</p>";
-  });
-});
+  }).catch(function(e){ apiFail("samples", e); });
+}).catch(function(e){ apiFail("samples", e); });
 </script>`,
     sha,
   );
@@ -750,7 +769,7 @@ export function scoreDetailPage(kind: "battery" | "stress" | "pressure", sha = "
      <div class="card"><h2 id="drivers-title">${kind === "battery" ? "Draining / recharging" : "What drives it"}</h2><div id="drivers"><p class="sub">Loading…</p></div></div>
      <p><a href="/"><button class="ghost">← Back to Today</button></a></p>
 <script>
-fetch("/api/scores").then(function(r){return r.json();}).then(function(j) {
+apiJson("/api/scores").then(function(j) {
   var s = j["${kind}"];
   var driversEl = document.getElementById("drivers");
   if (s && s.contributors && s.contributors.length) {
@@ -765,8 +784,8 @@ fetch("/api/scores").then(function(r){return r.json();}).then(function(j) {
   }
   document.getElementById("gauge").textContent = Math.round(s.value) + ("${kind}" === "pressure" ? "" : "%");
   document.getElementById("state").textContent = s.state + " · updated " + String(s.at).slice(0,16).replace("T"," ") + (s.source === "health" ? " · from Apple Health daily data" : "");
-}).catch(function() {
-  document.getElementById("drivers").innerHTML = "<p class='sub'>Could not load — reload to try again.</p>";
+}).catch(function(e) {
+  apiFail("drivers", e);
 });
 </script>
 <script>${CHART_JS}</script>`,
@@ -788,7 +807,7 @@ function metricRow(name, m, invert) {
   return "<div class='stat'><span>" + name + "</span><b style='color:" + (good ? "var(--act)" : "var(--bad)") + "'>" + (d >= 0 ? "+" : "") + d.toFixed(1) + "%</b></div>" +
     "<div class='stat'><span class='sub'>with factor / without</span><b>" + m.withMean.toFixed(1) + " / " + m.withoutMean.toFixed(1) + "</b></div>";
 }
-fetch("/api/impact").then(function(r){return r.json();}).then(function(j) {
+apiJson("/api/impact").then(function(j) {
   var el = document.getElementById("cards");
   if (!j.impacts.length) { el.innerHTML = "<p class='sub'>No factors tracked yet. Add tags to journal entries (e.g. caffeine, alcohol, workout) and keep measuring — impact cards appear here.</p>"; return; }
   var hrvLabel = j.hrvBasis === "sdnn" ? "HRV · SDNN (daily)" : j.hrvBasis === "mixed" ? "HRV · RMSSD / SDNN" : "HRV · RMSSD";
@@ -797,7 +816,7 @@ fetch("/api/impact").then(function(r){return r.json();}).then(function(j) {
     if (!f.enoughData) return head + "<p class='sub'>Not enough data yet — keep logging this factor and measuring.</p>";
     return head + "<div id='f" + idx + "'>" + metricRow(hrvLabel, f.metrics.rmssd, false) + metricRow("Battery", f.metrics.battery, false) + metricRow("Stress", f.metrics.stress, true) + "</div>";
   }).join("");
-});
+}).catch(function(e){ apiFail("cards", e); });
 </script>`,
     sha,
   );
@@ -827,13 +846,13 @@ export function manifestJson(): string {
 }
 
 export function serviceWorkerJs(): string {
-  return `const C = "openhrv-v1";
+  return `const C = "openhrv-v2";
 self.addEventListener("install", (e) => { e.waitUntil(caches.open(C).then((c) => c.addAll(["/", "/measure", "/journal", "/mydata", "/more", "/manifest.webmanifest"]))); self.skipWaiting(); });
-self.addEventListener("activate", (e) => { e.waitUntil(self.clients.claim()); });
+self.addEventListener("activate", (e) => { e.waitUntil(caches.keys().then((ks) => Promise.all(ks.filter((k) => k !== C).map((k) => caches.delete(k)))).then(() => self.clients.claim())); });
 self.addEventListener("fetch", (e) => {
   const u = new URL(e.request.url);
   if (u.pathname.startsWith("/api/")) return;
-  e.respondWith(fetch(e.request).then((r) => { const cp = r.clone(); caches.open(C).then((c) => c.put(e.request, cp)); return r; }).catch(() => caches.match(e.request)));
+  e.respondWith(fetch(e.request).then((r) => { if (e.request.method === "GET" && r.ok && !r.redirected && !u.pathname.startsWith("/cdn-cgi/")) { const cp = r.clone(); caches.open(C).then((c) => c.put(e.request, cp)); } return r; }).catch(() => caches.match(e.request)));
 });
 self.addEventListener("push", (e) => {
   let d = { title: "OpenHRV", body: "You have an update." };
@@ -860,7 +879,7 @@ export function sleepPage(sha = "", vm?: ChartPageVm & { stageHtml?: string; hou
      <div class="card"><h2>All nights</h2><div id="nights"><p class="sub">Loading…</p></div></div>
      <p><a href="/mydata"><button class="ghost">← Back to My Data</button></a></p>
 <script>
-fetch("/api/sleep").then(function(r){return r.json();}).then(function(j) {
+apiJson("/api/sleep").then(function(j) {
   var s = j.summary;
   function t12(iso) { var s2 = String(iso).slice(11, 16); if (!s2) return ""; var h = +s2.slice(0, 2), m = s2.slice(3, 5); var ap = h >= 12 ? "PM" : "AM"; h = h % 12 || 12; return h + ":" + m + " " + ap; }
   if (!s || !s.lastNight) { document.getElementById("lastsub").textContent = "No sleep recorded yet — import from Apple Health (Health Auto Export, a Shortcut, or export.xml) and your nights appear here."; document.getElementById("nights").innerHTML = ""; return; }
@@ -870,7 +889,7 @@ fetch("/api/sleep").then(function(r){return r.json();}).then(function(j) {
   document.getElementById("nights").innerHTML = s.nights.map(function(n) {
     return "<div class='stat'><span>" + n.date + " · " + t12(n.start_at) + "–" + t12(n.end_at) + " · " + n.source + "</span><b>" + n.hours.toFixed(1) + " h</b></div>";
   }).join("");
-});
+}).catch(function(e){ apiFail("lastsub", e); document.getElementById("nights").innerHTML = ""; });
 </script>
 <script>${CHART_JS}</script>`,
     sha,
@@ -890,7 +909,7 @@ export function categoryPage(key: string, title: string, sha = "", vm?: ChartPag
      <div class="card"><h2>Recent samples</h2><div id="recent"><p class="sub">Loading…</p></div></div>
      <p><a href="/mydata"><button class="ghost">← Back to My Data</button></a></p>
 <script>
-fetch("/api/mydata/categories").then(function(r){return r.json();}).then(function(j) {
+apiJson("/api/mydata/categories").then(function(j) {
   var cat = j.categories.filter(function(c){ return c.key === ${JSON.stringify(key)}; })[0];
   if (!cat) { document.getElementById("blurb").textContent = "Unknown category."; return; }
   document.getElementById("blurb").textContent = cat.blurb;
@@ -913,7 +932,7 @@ fetch("/api/mydata/categories").then(function(r){return r.json();}).then(functio
     if (s.type === "workout" && s.id) return "<a href='/workout/" + s.id + "' style='text-decoration:none;color:inherit'>" + main + "</a>";
     return main;
   }).join("") : "<p class='sub'>No samples in this category yet — they arrive via Apple Health import or Strava.</p>";
-});
+}).catch(function(e){ apiFail("recent", e); document.getElementById("blurb").textContent = ""; });
 </script>
 <script>${CHART_JS}</script>`,
     sha,
