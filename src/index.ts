@@ -70,7 +70,9 @@ import {
   type ActivityDay,
   type HourBucket,
 } from "./reports";
-import { buildFeed, feedDayLabel, type FeedSources } from "./journalfeed";import { impactPage, scoreDetailPage, workoutPage } from "./views";
+import { buildFeed, feedDayLabel, type FeedSources } from "./journalfeed";import { impactPage, longevityPage, scoreDetailPage, workoutPage, type LongevityVm } from "./views";
+import { MARKERS, ageAt, completeDraws, phenoAge, toCanonical } from "./phenoage";
+import { monthMeans, type MonthSampleRow } from "./longevity";
 import {
   parseExportXml,
   parseHealthAutoExport,
@@ -1522,6 +1524,132 @@ app.post("/api/settings/flags", async (c) => {
   await setSetting(c.env.DB, c.env.OWNER_EMAIL, "feature_flags", JSON.stringify(flags));
   return c.json({ ok: true, flags });
 });
+
+// ---------------------------------------------------------------- longevity wave (PLSI): labs, DOB, PhenoAge page
+app.post("/api/labs", async (c) => {
+  const owner = c.env.OWNER_EMAIL;
+  const body = (await c.req.json().catch(() => ({}))) as {
+    drawn_on?: unknown;
+    source?: unknown;
+    values?: Record<string, { value?: unknown; unit?: unknown }>;
+  };
+  const drawn = typeof body.drawn_on === "string" ? body.drawn_on : "";
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(drawn) || !Number.isFinite(Date.parse(`${drawn}T00:00:00Z`))) {
+    return c.json({ ok: false, error: "drawn_on must be a YYYY-MM-DD date." }, 400);
+  }
+  const source = typeof body.source === "string" && body.source.trim() ? body.source.trim().slice(0, 40) : "manual";
+  const values = body.values ?? {};
+  const keys = Object.keys(values);
+  if (!keys.length) return c.json({ ok: false, error: "No lab values provided." }, 400);
+  let saved = 0;
+  for (const key of keys) {
+    const spec = MARKERS.find((m) => m.key === key);
+    if (!spec) return c.json({ ok: false, error: `Unknown marker: ${key}.` }, 400);
+    const raw = values[key];
+    const v = typeof raw?.value === "number" ? raw.value : Number(raw?.value);
+    if (!Number.isFinite(v)) return c.json({ ok: false, error: `${spec.label} needs a numeric value.` }, 400);
+    const unit = typeof raw?.unit === "string" && raw.unit ? raw.unit : spec.entryUnit;
+    let canonical: number;
+    try {
+      canonical = toCanonical(key, v, unit);
+    } catch (e) {
+      return c.json({ ok: false, error: (e as Error).message }, 400);
+    }
+    await c.env.DB.prepare(
+      "INSERT INTO lab_results (owner, marker, value, unit, drawn_on, source) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(owner, marker, drawn_on) DO UPDATE SET value = excluded.value, unit = excluded.unit, source = excluded.source",
+    )
+      .bind(owner, key, canonical, spec.unit, drawn, source)
+      .run();
+    saved++;
+  }
+  return c.json({ ok: true, saved });
+});
+
+app.post("/api/settings/dob", async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as { dob?: unknown };
+  const dob = typeof body.dob === "string" ? body.dob : "";
+  const todayStr = new Date().toISOString().slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dob) || dob < "1920-01-01" || dob > todayStr || !Number.isFinite(Date.parse(`${dob}T00:00:00Z`))) {
+    return c.json({ ok: false, error: "Date of birth must be a valid date between 1920 and today." }, 400);
+  }
+  await setSetting(c.env.DB, c.env.OWNER_EMAIL, "dob", dob);
+  return c.json({ ok: true });
+});
+
+app.get("/longevity", async (c) => {
+  const owner = c.env.OWNER_EMAIL;
+  const dob = await getSetting(c.env.DB, owner, "dob");
+  const labRows = (await all(
+    c.env.DB,
+    "SELECT marker, value, drawn_on FROM lab_results WHERE owner = ? ORDER BY drawn_on DESC LIMIT 500",
+    owner,
+  )) as unknown as Array<{ marker: string; value: number; drawn_on: string }>;
+  const draws = completeDraws(labRows.map((r) => ({ marker: String(r.marker), value: Number(r.value), drawn_on: String(r.drawn_on) })));
+  const specByKey = new Map(MARKERS.map((m) => [m.key, m]));
+  let latest: LongevityVm["latest"] = null;
+  const history: LongevityVm["history"] = [];
+  if (dob) {
+    for (const d of draws) {
+      if (!d.complete) continue;
+      const age = ageAt(dob, d.drawn_on);
+      const pa = phenoAge(d.inputs, age);
+      const entry = { drawn_on: d.drawn_on, phenoAge: pa, chronoAge: age, accel: pa - age };
+      history.push(entry);
+      if (!latest) {
+        latest = {
+          ...entry,
+          inputs: MARKERS.map((m) => ({ key: m.key, label: m.label, value: d.inputs[m.key], unit: m.unit })),
+        };
+      }
+    }
+  }
+  const newest = draws[0] ?? null;
+  const pending =
+    !latest && newest && !newest.complete
+      ? { drawn_on: newest.drawn_on, missingLabels: newest.missing.map((k) => specByKey.get(k)?.label ?? k) }
+      : null;
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const cutoff = new Date(Date.parse(`${todayStr}T00:00:00Z`) - 100 * 86_400_000).toISOString().slice(0, 10);
+  const sampleRows = (await all(
+    c.env.DB,
+    "SELECT type, value, unit, start_at, end_at, meta_json FROM health_samples ORDER BY start_at ASC LIMIT 10000",
+  )) as Array<Record<string, unknown>>;
+  const monthRows: MonthSampleRow[] = sampleRows
+    .map((s) => ({
+      type: String(s.type),
+      value: s.value === null ? null : Number(s.value),
+      unit: String(s.unit ?? ""),
+      start_at: String(s.start_at),
+      end_at: s.end_at ? String(s.end_at) : null,
+      granularity: rowGranularity(s.meta_json),
+    }))
+    .filter((r) => r.start_at.slice(0, 10) >= cutoff);
+  const sleepRows = (await all(c.env.DB, "SELECT start_at, end_at, duration_s FROM sleep LIMIT 500")) as unknown as Array<{
+    start_at: string;
+    end_at: string;
+    duration_s: number;
+  }>;
+  for (const s of sleepRows) {
+    monthRows.push({
+      type: "sleep_analysis",
+      value: Number(s.duration_s) / 3600,
+      unit: "h",
+      start_at: String(s.start_at),
+      end_at: String(s.end_at),
+    });
+  }
+  const vm: LongevityVm = {
+    dob,
+    today: todayStr,
+    anyDraw: draws.length > 0,
+    latest,
+    history,
+    pending,
+    months: monthMeans(monthRows, todayStr),
+  };
+  return c.html(longevityPage(vm, c.env.GIT_SHA ?? ""));
+});
+
 app.post("/api/settings/theme", async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as { theme?: string };
   if (body.theme) await setSetting(c.env.DB, c.env.OWNER_EMAIL, "theme", String(body.theme));

@@ -2,6 +2,8 @@
 
 import { CHART_CSS, CHART_JS } from "./chart";
 import type { CoachPanel } from "./coachpanel";
+import { MARKERS } from "./phenoage";
+import type { MonthSummary } from "./longevity";
 
 export const ICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" rx="22" fill="#ffffff"/><path d="M10 54 H32 L40 32 L54 74 L64 46 H90" fill="none" stroke="#ff2d55" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 
@@ -323,6 +325,7 @@ export function todayPage(d: TodayData, sha = ""): string {
   const sleepJournal = `<div class="card" data-section="sleep-journal"><h2>Sleep &amp; journal</h2>${sleepCard}${journalRows || (sleepCard ? "" : `<p class="sub">Nothing logged yet.</p>`)}<div class="stat"><span><a href="/journal" style="color:var(--acc);text-decoration:none">Full journal timeline</a></span><b>→</b></div></div>`;
   const explore = `<div class="card" data-section="explore"><h2>Explore</h2>
      <div class="stat"><span><a href="/reports" style="color:var(--acc);text-decoration:none">Reports</a></span><b>stress impact, activity, heart</b></div>
+     <div class="stat"><span><a href="/longevity" style="color:var(--acc);text-decoration:none">Longevity</a></span><b>PhenoAge clock, labs, monthly wearables</b></div>
      <div class="stat"><span><a href="/sleep" style="color:var(--acc);text-decoration:none">Sleep</a></span><b>nights, stages, debt</b></div>
      <div class="stat"><span><a href="/tests" style="color:var(--acc);text-decoration:none">Self-tests</a></span><b>Self-Discovery set</b></div>
      <div class="stat"><span><a href="/lab" style="color:var(--acc);text-decoration:none">Science Lab</a></span><b>correlations</b></div>
@@ -562,6 +565,7 @@ export function morePage(sha = ""): string {
      <div class="gauge" id="phase" style="font-size:22px">Ready</div><p><button id="bstart">Start 2-minute session</button></p><p class="msg" id="bmsg"></p></div>
      <div class="card"><h2>Explore</h2>
      <div class="stat"><span><a href="/reports" style="color:var(--acc);text-decoration:none">Reports</a></span><b>stress impact, activity, heart</b></div>
+     <div class="stat"><span><a href="/longevity" style="color:var(--acc);text-decoration:none">Longevity</a></span><b>PhenoAge clock, labs, monthly wearables</b></div>
      <div class="stat"><span><a href="/sleep" style="color:var(--acc);text-decoration:none">Sleep</a></span><b>nights, stages, debt</b></div>
      <div class="stat"><span><a href="/tests" style="color:var(--acc);text-decoration:none">Self-tests</a></span><b>Self-Discovery set</b></div>
      <div class="stat"><span><a href="/lab" style="color:var(--acc);text-decoration:none">Science Lab</a></span><b>correlations</b></div>
@@ -1406,6 +1410,129 @@ const REPORT_RANGES: Array<[string, string]> = [
 const reportRangeLinks = (base: string, range: string): string =>
   `<div class="seg" role="group" aria-label="Range">${REPORT_RANGES.map(([v, l]) => `<a href="${base}?range=${v}"${v === range ? ' class="on"' : ""}>${l}</a>`).join("")}</div>`;
 
+
+// ---------------------------------------------------------------- longevity (PLSI wave)
+export interface LongevityDrawVm {
+  drawn_on: string;
+  phenoAge: number;
+  chronoAge: number;
+  accel: number;
+}
+
+export interface LongevityVm {
+  dob: string | null;
+  today: string;
+  anyDraw: boolean;
+  latest: (LongevityDrawVm & { inputs: Array<{ key: string; label: string; value: number; unit: string }> }) | null;
+  history: LongevityDrawVm[];
+  pending: { drawn_on: string; missingLabels: string[] } | null;
+  months: MonthSummary[];
+}
+
+const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const monthLabel = (ym: string): string => `${MONTH_NAMES[Number(ym.slice(5, 7)) - 1]} ${ym.slice(0, 4)}`;
+const fmt1 = (v: number | null, suffix = ""): string => (v === null ? "—" : `${Math.round(v * 10) / 10}${suffix}`);
+
+export function longevityPage(vm: LongevityVm, sha = ""): string {
+  const latest = vm.latest;
+  const phenoCard = latest
+    ? `<div class="card"><h2>PhenoAge · blood aging clock</h2>
+     <div class="gauge" style="font-size:44px">${latest.phenoAge.toFixed(1)}<span style="font-size:20px"> yrs</span></div>
+     <div class="stat"><span>Chronological age at draw</span><b>${latest.chronoAge.toFixed(1)} yrs</b></div>
+     <div class="stat"><span>Acceleration</span><b>${latest.accel >= 0 ? "+" : "−"}${Math.abs(latest.accel).toFixed(1)} yrs</b></div>
+     <p class="sub">On this draw you are aging ${latest.accel < 0 ? "slower" : latest.accel > 0 ? "faster" : "at the same pace"} than your calendar age.</p>
+     <p class="sub">Draw: ${escT(latest.drawn_on)} · all 9 markers from the same draw.</p>
+     ${latest.inputs.map((m) => `<div class="stat"><span>${escT(m.label)}</span><b>${m.value} ${escT(m.unit)}</b></div>`).join("")}
+    </div>`
+    : `<div class="card"><h2>PhenoAge · blood aging clock</h2>
+     ${
+       vm.pending
+         ? `<p class="sub">The most recent draw (${escT(vm.pending.drawn_on)}) is missing markers — PhenoAge needs all 9 from the SAME draw:</p>
+     ${vm.pending.missingLabels.map((l) => `<div class="stat"><span>${escT(l)}</span><b>missing</b></div>`).join("")}`
+         : vm.anyDraw
+           ? `<p class="sub">Your most recent draw is complete — it only needs your date of birth to compute PhenoAge (add it in the form below).</p>`
+           : `<p class="sub">No lab draws yet. Enter a full blood panel below — all 9 markers from one draw — and your PhenoAge appears here.</p>`
+     }
+     ${vm.dob ? "" : `<p class="sub">Your date of birth is also needed (the clock compares against your calendar age) — add it in the form below.</p>`}
+     <p class="sub">Research and education, not a diagnosis.</p></div>`;
+
+  const historyCard =
+    vm.history.length > 1
+      ? `<div class="card"><h2>Draw history</h2>
+     ${vm.history.map((h) => `<div class="stat"><span>${escT(h.drawn_on)}</span><b>PhenoAge ${h.phenoAge.toFixed(1)} · ${h.accel >= 0 ? "+" : "−"}${Math.abs(h.accel).toFixed(1)} yrs</b></div>`).join("")}
+    </div>`
+      : "";
+
+  const markerInputs = MARKERS.map(
+    (m) =>
+      `<div class="stat"><span>${escT(m.label)} (${escT(m.entryUnit)})</span><b><input type="number" step="any" inputmode="decimal" id="lab-${m.key}" style="width:110px"></b></div>`,
+  ).join("");
+
+  const formCard = `<div class="card"><h2>Add a blood draw</h2>
+     <div class="stat"><span>Draw date</span><b><input type="date" id="lab-date" value="${escT(vm.today)}"></b></div>
+     ${markerInputs}
+     ${
+       vm.dob
+         ? ""
+         : `<div class="stat"><span>Date of birth</span><b><input type="date" id="lab-dob"></b></div>
+     <p class="sub">Stored only in this app's settings, on your own Worker — used solely as the clock's calendar-age input.</p>`
+     }
+     <p><button id="lab-save">Save draw</button></p>
+     <p class="msg" id="labmsg"></p>
+    </div>
+<script>
+document.getElementById("lab-save").addEventListener("click", function() {
+  var msg = document.getElementById("labmsg");
+  var values = {};
+  ${JSON.stringify(MARKERS.map((m) => m.key))}.forEach(function(k) {
+    var el = document.getElementById("lab-" + k);
+    if (el && el.value !== "") values[k] = { value: Number(el.value), unit: "" };
+  });
+  var units = ${JSON.stringify(Object.fromEntries(MARKERS.map((m) => [m.key, m.entryUnit])))};
+  Object.keys(values).forEach(function(k) { values[k].unit = units[k]; });
+  var drawn = document.getElementById("lab-date").value;
+  var dobEl = document.getElementById("lab-dob");
+  var chain = Promise.resolve();
+  if (dobEl && dobEl.value) {
+    chain = chain.then(function() { return apiJson("/api/settings/dob", { method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify({ dob: dobEl.value }) }); });
+  }
+  if (Object.keys(values).length) {
+    chain = chain.then(function() { return apiJson("/api/labs", { method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify({ drawn_on: drawn, source: "manual", values: values }) }); });
+  }
+  chain.then(function() { location.reload(); }).catch(function(e) {
+    msg.textContent = e && e.sessionExpired ? "Your sign-in session expired — tap Today, sign in again, then re-enter." : "Could not save: " + (e && e.message ? e.message : "unknown error");
+  });
+});
+</script>`;
+
+  const cell = (v: string) => `<td style="padding:6px 4px;text-align:right;border-top:1px solid var(--line)">${v}</td>`;
+  const monthsCard = `<div class="card"><h2>Wearables · monthly projection</h2>
+     <table style="width:100%;border-collapse:collapse;font-size:13px">
+       <tr><th style="text-align:left;padding:6px 4px">Month</th><th style="text-align:right;padding:6px 4px">Sleep h</th><th style="text-align:right;padding:6px 4px">Rest HR</th><th style="text-align:right;padding:6px 4px">HRV ms</th><th style="text-align:right;padding:6px 4px">Steps/day</th><th style="text-align:right;padding:6px 4px">Workout min</th><th style="text-align:right;padding:6px 4px">Active days</th><th style="text-align:right;padding:6px 4px">VO2max</th></tr>
+       ${vm.months
+         .map(
+           (m) =>
+             `<tr><td style="padding:6px 4px;border-top:1px solid var(--line)">${monthLabel(m.month)}${m.partial ? ` <span class="sub">(partial)</span>` : ""}</td>${cell(fmt1(m.sleepH))}${cell(fmt1(m.restingHr))}${cell(fmt1(m.hrvMs))}${cell(m.stepsPerDay === null ? "—" : String(Math.round(m.stepsPerDay)))}${cell(m.workoutMin === null ? "—" : String(m.workoutMin))}${cell(String(m.activeDays))}${cell(fmt1(m.vo2max))}</tr>`,
+         )
+         .join("")}
+     </table>
+     <p class="sub">Monthly means from your imported Apple Health / Strava data — the same samples behind Today and Reports.</p>
+    </div>`;
+
+  return layout(
+    "more",
+    "Longevity",
+    `${phenoCard}
+     ${historyCard}
+     ${monthsCard}
+     ${formCard}
+     <p class="sub">Aging clock: blood PhenoAge (Levine 2018), implemented after PLSI — Insilico's Personal Longevity State Interface (MIT). Wearables monthly projection follows PLSI's sleep_activity map.</p>
+     <p><a href="/reports"><button class="ghost">← Back to Reports</button></a></p>`,
+    sha,
+  );
+}
+
+
 export function reportsHubPage(sha = ""): string {
   return layout(
     "more",
@@ -1413,6 +1540,7 @@ export function reportsHubPage(sha = ""): string {
     `<div class="favcard"><a class="favmain" href="/reports/stress"><span class="favname">Stress Impact</span><span class="favsub">which hours your heart worked hard while you sat still</span></a></div>
      <div class="favcard"><a class="favmain" href="/reports/activity"><span class="favname">Activity</span><span class="favsub">active time, stand hours, intensity and energy</span></a></div>
      <div class="favcard"><a class="favmain" href="/reports/heart"><span class="favname">Heart</span><span class="favsub">a full day of heart rate, colored by what you were doing</span></a></div>
+     <div class="favcard"><a class="favmain" href="/longevity"><span class="favname">Longevity</span><span class="favsub">PhenoAge aging clock from your blood labs, plus monthly wearables</span></a></div>
      <p class="sub">Reports read the hourly buckets and daily aggregates your imports already store. Nothing here is locked or sampled — every number traces to a stored sample, and anything estimated says so.</p>`,
     sha,
   );

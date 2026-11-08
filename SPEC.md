@@ -679,3 +679,45 @@ message and a one-tap sign-in/retry link — never a dead loader.
 only successful, non-redirected GET responses (a cached login page
 can no longer be served as app content). Tests:
 test/sessionresilience.test.ts; 187/187.
+
+## Longevity (PLSI) — 2026-11-08
+
+Implemented after PLSI (github.com/Insilico-org/plsi, MIT) — Insilico's
+Personal Longevity State Interface. Two of its maps are ported:
+
+- **Blood PhenoAge** (PLSI map/derive.py): the Levine-2018 clinical
+  aging clock (Levine et al., doi:10.18632/aging.101414), constants
+  verified against the BioAge reference via PLSI. `src/phenoage.ts`
+  computes PhenoAge + acceleration from the 9 markers of ONE blood
+  draw (albumin, creatinine, glucose, CRP, lymphocyte %, MCV, RDW,
+  ALP, WBC) plus chronological age; oracle vectors from PLSI's own
+  Python are pinned in test/phenoage.test.ts (32.9721 @ 40y;
+  75.9221 @ 60y). Labs are stored canonical-only in `lab_results`
+  (migration 0006); US entry units convert at the API boundary
+  (POST /api/labs). Date of birth lives only in the app's own
+  settings store (POST /api/settings/dob) as the clock's
+  calendar-age input — never logged, never exported.
+- **Wearables monthly projection** (PLSI sleep_activity map):
+  `src/longevity.ts` summarizes the last 3 calendar months (current
+  month labeled partial) — mean sleep h/night, resting HR, HRV SDNN,
+  steps/day, workout minutes, active days, latest VO2max — from the
+  health_samples store with healthdays.ts granularity rules (hourly
+  rows never enter daily derivation; longest sleep record wins the
+  night; the `sleep` table is merged in as sleep_analysis rows, the
+  same merge healthDayInputs performs).
+
+Page: GET /longevity (linked from Reports, More, and Today's Explore
+card per the More⊆Today rule). Boundaries, inherited from PLSI and
+stated on the page: markers must come from the SAME draw — draws are
+grouped by date and an incomplete draw shows its missing-markers
+checklist instead of a blended score; the clock is research and
+education, NOT a diagnosis; every value traces to a stored row.
+
+Deliberately NOT ported from PLSI: the multi-agent team and token
+economy (OpenHRV is a single-user personal app — no agents, no
+tokens), methylation/DNA clocks (no methylation data source exists
+in the app, and adding one means a new sensitive-data lane), and
+mothership result-sharing (nothing leaves the owner's Worker; the
+app's whole posture is locked-to-owner). A prediction ledger
+(self-fulfilling-prophecy log) is a plausible future wave but is
+out of scope here.
