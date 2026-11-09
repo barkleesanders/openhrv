@@ -116,10 +116,10 @@ describe("POST /api/labs + /api/settings/dob", () => {
 
   it("validates DOB range", async () => {
     const { env, db } = makeEnv();
-    const ok = await app.request("/api/settings/dob", jsonInit({ dob: "1986-11-03" }), env);
+    const ok = await app.request("/api/settings/dob", jsonInit({ dob: "1986-11-03" }), env); // public-guard:allow — fictional test fixture
     expect(ok.status).toBe(200);
-    expect(db.table("settings").find((x) => x.key === "dob")!.value_json).toBe("1986-11-03");
-    const bad = await app.request("/api/settings/dob", jsonInit({ dob: "1800-01-01" }), env);
+    expect(db.table("settings").find((x) => x.key === "dob")!.value_json).toBe("1986-11-03"); // public-guard:allow — fictional test fixture
+    const bad = await app.request("/api/settings/dob", jsonInit({ dob: "1800-01-01" }), env); // public-guard:allow — fictional test fixture
     expect(bad.status).toBe(400);
   });
 });
@@ -147,7 +147,7 @@ describe("GET /longevity", () => {
 
   it("renders PhenoAge for a seeded complete draw + DOB", async () => {
     const { env, db } = makeEnv();
-    db.table("settings").push({ owner: OWNER, key: "dob", value_json: "1986-11-03" });
+    db.table("settings").push({ owner: OWNER, key: "dob", value_json: "1986-11-03" }); // public-guard:allow — fictional test fixture
     const oracle = { albumin: 45, creatinine: 80, glucose: 5.0, crp: 0.1, lymphocyte_pct: 30, mcv: 90, rdw: 13, alp: 70, wbc: 6 };
     for (const m of MARKERS) {
       db.table("lab_results").push({
@@ -171,7 +171,7 @@ describe("GET /longevity", () => {
 
   it("shows the missing-markers checklist for an incomplete newest draw", async () => {
     const { env, db } = makeEnv();
-    db.table("settings").push({ owner: OWNER, key: "dob", value_json: "1986-11-03" });
+    db.table("settings").push({ owner: OWNER, key: "dob", value_json: "1986-11-03" }); // public-guard:allow — fictional test fixture
     db.table("lab_results").push({ owner: OWNER, marker: "albumin", value: 45, unit: "g/L", drawn_on: "2026-11-03", source: "manual" });
     const html = await (await app.request("/longevity", {}, env)).text();
     expect(html).toContain("missing markers");

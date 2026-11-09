@@ -1,0 +1,5 @@
+#!/bin/sh
+# public-guard pre-push hook — blocks pushes containing personal data
+# or secrets (see scripts/public-guard.mjs). Activate per clone:
+#   git config core.hooksPath .githooks
+exec node "$(git rev-parse --show-toplevel)/scripts/public-guard.mjs"

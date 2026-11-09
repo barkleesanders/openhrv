@@ -17,8 +17,8 @@ const jsonInit = (body: unknown): RequestInit => ({
 });
 
 const GENETICS = {
-  apoe: "ε2/ε3",
-  snps: { rs429358: "TT", rs7412: "CT" },
+  apoe: "ε2/ε3", // public-guard:allow — fictional test fixture
+  snps: { rs429358: "TT", rs7412: "CT" }, // public-guard:allow — fictional test fixture
   source: "Example genome export (fictional test fixture)",
 };
 
@@ -38,16 +38,16 @@ describe("POST /api/settings/genetics + /api/settings/family", () => {
     const row = db.table("settings").find((x) => x.key === "genetics");
     expect(row).toBeTruthy();
     const stored = JSON.parse(String(row!.value_json));
-    expect(stored.apoe).toBe("ε2/ε3");
-    expect(stored.snps).toEqual({ rs429358: "TT", rs7412: "CT" });
+    expect(stored.apoe).toBe("ε2/ε3"); // public-guard:allow — fictional test fixture
+    expect(stored.snps).toEqual({ rs429358: "TT", rs7412: "CT" }); // public-guard:allow — fictional test fixture
     expect(stored.source).toContain("Example genome export");
   });
 
   it("rejects a missing or oversized APOE with a human 400", async () => {
     const { env } = makeEnv();
     expect((await app.request("/api/settings/genetics", jsonInit({ snps: {} }), env)).status).toBe(400);
-    expect((await app.request("/api/settings/genetics", jsonInit({ apoe: "ε2/ε3/ε2/ε3/waytoolong" }), env)).status).toBe(400);
-    expect((await app.request("/api/settings/genetics", jsonInit({ apoe: "ε2/ε3", snps: ["TC"] }), env)).status).toBe(400);
+    expect((await app.request("/api/settings/genetics", jsonInit({ apoe: "ε2/ε3/ε2/ε3/waytoolong" }), env)).status).toBe(400); // public-guard:allow — fictional test fixture
+    expect((await app.request("/api/settings/genetics", jsonInit({ apoe: "ε2/ε3", snps: ["TC"] }), env)).status).toBe(400); // public-guard:allow — fictional test fixture
   });
 
   it("round-trips family members, including a living member with null years", async () => {
@@ -83,7 +83,7 @@ describe("GET /longevity genetics + family cards", () => {
     expect(r.status).toBe(200);
     const html = await r.text();
     expect(html).toContain("Genetics — 23andMe");
-    expect(html).toContain("ε2/ε3");
+    expect(html).toContain("ε2/ε3"); // public-guard:allow — fictional test fixture
     expect(html).toContain("rs429358");
     expect(html).toContain("rs7412");
     expect(html).toContain("not a diagnosis and not destiny");

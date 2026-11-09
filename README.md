@@ -69,3 +69,11 @@ Full claim table with per-feature status: [SPEC.md](SPEC.md).
 ## License
 
 MIT
+
+## Public-repo guard
+
+This repo is public. `scripts/public-guard.mjs` scans every tracked file for personal data and secrets that must never be pushed: APOE/genetic results, SNP genotype calls, dates of birth, military document references, health-record artifacts, Google Drive file links, and common secret shapes. Personal name literals live in a machine-local denylist (`~/.config/public-guard/denylist.txt`) that is never committed.
+
+- Local: a pre-push hook blocks a bad push. Activate per clone: `git config core.hooksPath .githooks`
+- Server-side: the `public-guard` GitHub Actions workflow runs the same scan on every push and PR.
+- Reviewed fictional test fixtures carry a trailing `public-guard:allow` marker on the line; never use the marker to wave through real personal data.
