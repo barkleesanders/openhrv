@@ -721,3 +721,8 @@ mothership result-sharing (nothing leaves the owner's Worker; the
 app's whole posture is locked-to-owner). A prediction ledger
 (self-fulfilling-prophecy log) is a plausible future wave but is
 out of scope here.
+
+## Ship evidence — 2026-11-08 (enrichment wave)
+- Settings lanes POST /api/settings/genetics + /api/settings/family; Longevity page genetics + family cards. 213/213 tests; production smoke 18/18.
+- Real-data import verified on production: the owner imported their own birthday, APOE diplotype (derived from the direct APOE SNPs in their consumer genome export), family longevity spans (from their public family-heritage site), a decade of FHIR lab history (95 PhenoAge-marker values across 19 draw days — no complete 9-marker draw yet; CRP absent from the export) and 600 vitals samples (first blood-pressure and weight data in the app) via an idempotent local importer. Personal values are intentionally NOT recorded in this public repo — the public-push guard (scripts/public-guard.mjs) enforces that.
+- Keep-updated: a weekly job re-imports when a newer health-records export appears (temp access token created/revoked per run; silent when unchanged).
