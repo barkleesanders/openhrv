@@ -1419,10 +1419,26 @@ export interface LongevityDrawVm {
   accel: number;
 }
 
+export interface GeneticsVm {
+  apoe: string;
+  snps: Record<string, string>;
+  source: string;
+}
+
+export interface FamilyMemberVm {
+  name: string;
+  relation: string;
+  born: number | null;
+  died: number | null;
+  note?: string;
+}
+
 export interface LongevityVm {
   dob: string | null;
   today: string;
   anyDraw: boolean;
+  genetics: GeneticsVm | null;
+  family: FamilyMemberVm[] | null;
   latest: (LongevityDrawVm & { inputs: Array<{ key: string; label: string; value: number; unit: string }> }) | null;
   history: LongevityDrawVm[];
   pending: { drawn_on: string; missingLabels: string[] } | null;
@@ -1505,6 +1521,36 @@ document.getElementById("lab-save").addEventListener("click", function() {
 });
 </script>`;
 
+  const geneticsCard = vm.genetics
+    ? `<div class="card"><h2>Genetics — 23andMe</h2>
+     <div class="gauge" style="font-size:34px">APOE ${escT(vm.genetics.apoe)}</div>
+     ${Object.entries(vm.genetics.snps)
+       .map(([rs, gt]) => `<div class="stat"><span>${escT(rs)}</span><b>${escT(gt)}</b></div>`)
+       .join("")}
+     <p class="sub">APOE findings are population-level associations from genetic studies — not a diagnosis and not destiny; many other genes and lifestyle factors matter.</p>
+     <p class="sub">Derived from the direct APOE SNPs in your raw 23andMe data; direct SNPs override older proxy-marker estimates.</p>
+     <p class="sub">Source: ${escT(vm.genetics.source)}</p>
+    </div>`
+    : "";
+
+  const familyCard =
+    vm.family && vm.family.length
+      ? `<div class="card"><h2>Family longevity</h2>
+     ${vm.family
+       .map((f) => {
+         const span =
+           f.born !== null && f.died !== null
+             ? `${f.born}–${f.died} · ${f.died - f.born} yrs`
+             : f.born !== null
+               ? `b. ${f.born} · living`
+               : "living";
+         return `<div class="stat"><span>${escT(f.name)} · ${escT(f.relation)}${f.note ? ` — ${escT(f.note)}` : ""}</span><b>${span}</b></div>`;
+       })
+       .join("")}
+     <p class="sub">From your Sanders–King heritage tree (kingsandersheritage.com).</p>
+    </div>`
+      : "";
+
   const cell = (v: string) => `<td style="padding:6px 4px;text-align:right;border-top:1px solid var(--line)">${v}</td>`;
   const monthsCard = `<div class="card"><h2>Wearables · monthly projection</h2>
      <table style="width:100%;border-collapse:collapse;font-size:13px">
@@ -1525,6 +1571,8 @@ document.getElementById("lab-save").addEventListener("click", function() {
     `${phenoCard}
      ${historyCard}
      ${monthsCard}
+     ${geneticsCard}
+     ${familyCard}
      ${formCard}
      <p class="sub">Aging clock: blood PhenoAge (Levine 2018), implemented after PLSI — Insilico's Personal Longevity State Interface (MIT). Wearables monthly projection follows PLSI's sleep_activity map.</p>
      <p><a href="/reports"><button class="ghost">← Back to Reports</button></a></p>`,

@@ -1576,9 +1576,70 @@ app.post("/api/settings/dob", async (c) => {
   return c.json({ ok: true });
 });
 
+/** Genetics setting (session lane): the APOE summary derived from the
+ *  owner's own 23andMe raw data, written by the Mini importer. Values are
+ *  never logged. Loose shape validation only. */
+app.post("/api/settings/genetics", async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as { apoe?: unknown; snps?: unknown; source?: unknown };
+  const apoe = typeof body.apoe === "string" ? body.apoe.trim() : "";
+  if (!apoe || apoe.length > 12) return c.json({ ok: false, error: "APOE diplotype is required (max 12 chars)." }, 400);
+  const snps: Record<string, string> = {};
+  if (body.snps !== undefined) {
+    if (typeof body.snps !== "object" || body.snps === null || Array.isArray(body.snps)) {
+      return c.json({ ok: false, error: "snps must be an object of rsID -> genotype." }, 400);
+    }
+    for (const [k, v] of Object.entries(body.snps as Record<string, unknown>)) {
+      if (typeof v !== "string" || v.length > 8) return c.json({ ok: false, error: `SNP ${k} needs a short genotype string.` }, 400);
+      snps[k.slice(0, 20)] = v;
+    }
+  }
+  const source = typeof body.source === "string" && body.source.trim() ? body.source.trim().slice(0, 200) : "23andMe";
+  await setSetting(c.env.DB, c.env.OWNER_EMAIL, "genetics", JSON.stringify({ apoe, snps, source }));
+  return c.json({ ok: true });
+});
+
+/** Family-longevity setting (session lane): the owner's heritage-tree
+ *  summary (names + birth/death years), written by the Mini importer. */
+app.post("/api/settings/family", async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as { members?: unknown };
+  if (!Array.isArray(body.members) || body.members.length < 1 || body.members.length > 50) {
+    return c.json({ ok: false, error: "members must be an array of 1-50 people." }, 400);
+  }
+  const year = (v: unknown): number | null | undefined => {
+    if (v === null || v === undefined) return null;
+    const n = typeof v === "number" ? v : Number(v);
+    return Number.isInteger(n) && n >= 1800 && n <= 2100 ? n : undefined;
+  };
+  const members: Array<{ name: string; relation: string; born: number | null; died: number | null; note?: string }> = [];
+  for (const raw of body.members as Array<Record<string, unknown>>) {
+    const name = typeof raw?.name === "string" ? raw.name.trim().slice(0, 120) : "";
+    const relation = typeof raw?.relation === "string" ? raw.relation.trim().slice(0, 60) : "";
+    const born = year(raw?.born);
+    const died = year(raw?.died);
+    if (!name || !relation || born === undefined || died === undefined) {
+      return c.json({ ok: false, error: "Each member needs a name, a relation, and birth/death years (or null)." }, 400);
+    }
+    const m: { name: string; relation: string; born: number | null; died: number | null; note?: string } = { name, relation, born, died };
+    if (typeof raw?.note === "string" && raw.note.trim()) m.note = raw.note.trim().slice(0, 200);
+    members.push(m);
+  }
+  await setSetting(c.env.DB, c.env.OWNER_EMAIL, "family_longevity", JSON.stringify({ members }));
+  return c.json({ ok: true });
+});
+
 app.get("/longevity", async (c) => {
   const owner = c.env.OWNER_EMAIL;
   const dob = await getSetting(c.env.DB, owner, "dob");
+  let genetics: LongevityVm["genetics"] = null;
+  try {
+    const g = JSON.parse((await getSetting(c.env.DB, owner, "genetics")) ?? "null") as LongevityVm["genetics"];
+    if (g && typeof g.apoe === "string" && g.apoe) genetics = { apoe: g.apoe, snps: g.snps ?? {}, source: g.source ?? "" };
+  } catch { genetics = null; }
+  let family: LongevityVm["family"] = null;
+  try {
+    const f = JSON.parse((await getSetting(c.env.DB, owner, "family_longevity")) ?? "null") as { members?: LongevityVm["family"] } | null;
+    if (f && Array.isArray(f.members) && f.members.length) family = f.members;
+  } catch { family = null; }
   const labRows = (await all(
     c.env.DB,
     "SELECT marker, value, drawn_on FROM lab_results WHERE owner = ? ORDER BY drawn_on DESC LIMIT 500",
@@ -1642,6 +1703,8 @@ app.get("/longevity", async (c) => {
     dob,
     today: todayStr,
     anyDraw: draws.length > 0,
+    genetics,
+    family,
     latest,
     history,
     pending,
